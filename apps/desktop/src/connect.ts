@@ -19,7 +19,8 @@ const client = new TransportClient(url, {
     console.log("[desktop] connected");
     client.send({ type: "hello", clientId: "desktop-cli" });
     client.send({ type: "subscribe", workerId: "local" });
-    client.send({ type: "chat.send", sessionId: "s1", text: "ping from desktop" });
+    const prompt = process.env.AIW_PROMPT ?? "Reply with a short one-line greeting. Do not use any tools.";
+    client.send({ type: "chat.send", sessionId: "s1", text: prompt });
   },
   onMessage(msg) {
     switch (msg.type) {
