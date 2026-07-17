@@ -1,0 +1,37 @@
+# AI Workspace — Roadmap & Milestones
+
+Status legend: ✅ done · 🚧 in progress · ⬜ not started
+
+## Foundation
+
+| # | Milestone | Status | Notes |
+|---|-----------|--------|-------|
+| 0 | Repo + monorepo scaffold | ✅ | pnpm workspace, protocol/transport packages, 3 apps, custom license |
+| 1 | Wire protocol (Desktop⇄Worker⇄Relay types) | ✅ | `@ai-workspace/protocol` discriminated unions |
+| 2 | WebSocket transport (server + reconnecting client) | ✅ | `@ai-workspace/transport`, verified end-to-end |
+| 3 | `aiw` CLI — `init` / `start` / `status` | ✅ | config at `~/.ai-workspace/worker.json`, `--yes` unattended mode |
+| 4 | Keep-awake manager (caffeinate power assertion) | ✅ | policy: while-active / always / off, tied to task activity |
+| 5 | Agent detection (which CLIs are installed) | ✅ | probes claude/codex/gemini/openhands/roo on PATH |
+
+## Next up
+
+| # | Milestone | Status | Notes |
+|---|-----------|--------|-------|
+| 6 | Claude Code agent adapter | ⬜ | replace echo stub — spawn agent, stream real output over `chat.delta` |
+| 7 | Session store (persistent chat) | ⬜ | own the session model so conversations resume without rebuilding context |
+| 8 | Desktop UI: Electron + React + shadcn/ui | ⬜ | dashboard + chat on top of the existing TransportClient |
+| 9 | Pairing / auth (Desktop trusts a Worker) | ⬜ | use the pairing code minted at init; key exchange |
+| 10 | Approval Center (git push / rm / docker gating) | ⬜ | high-trust feature; end-to-end approve/reject |
+| 11 | Terminal streaming | ⬜ | interactive PTY over the transport |
+| 12 | Localhost preview (detect dev servers) | ⬜ | Next.js/Vite/Rails/Django tunneled into Desktop |
+| 13 | File explorer + media preview | ⬜ | browse repo, preview images/video/PDF/markdown |
+| 14 | Notifications | ⬜ | task done / test failed / build ok / waiting approval |
+| 15 | Optional stateless relay | ⬜ | forward encrypted frames for remote access without VPN |
+
+## Distribution
+
+| # | Milestone | Status | Notes |
+|---|-----------|--------|-------|
+| D1 | Worker install: `curl \| sh` → `aiw` binary | ⬜ | interactive `aiw worker init` wizard already built |
+| D2 | Worker auto-start as launchd service | ⬜ | survive reboots |
+| D3 | Desktop `.dmg` download (Electron build) | ⬜ | GitHub Releases + auto-update later |
