@@ -1,21 +1,21 @@
 {
-  "name": "@ai-workspace/desktop",
+  "name": "@ai-workspace/transport",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "scripts": {
-    "dev": "echo 'TODO: launch Electron + shadcn/ui renderer dev server'",
-    "connect": "tsx src/connect.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
     "@ai-workspace/protocol": "workspace:*",
-    "@ai-workspace/transport": "workspace:*"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
+    "@types/ws": "^8.5.12",
     "typescript": "^5.6.0"
   }
 }

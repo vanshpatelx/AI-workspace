@@ -11,7 +11,8 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@ai-workspace/protocol": "workspace:*"
+    "@ai-workspace/protocol": "workspace:*",
+    "@ai-workspace/transport": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

@@ -15,4 +15,4 @@ export function renderDashboard(items: WorkspaceSummary[]): string {
     .join("\n");
 }
 
-console.log(`ai-workspace desktop (protocol v${PROTOCOL_VERSION})`);
+export const DESKTOP_BANNER = `ai-workspace desktop (protocol v${PROTOCOL_VERSION})`;
