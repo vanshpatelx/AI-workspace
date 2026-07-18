@@ -49,8 +49,23 @@ aiw service uninstall
 ### Desktop app
 
 Download the `.dmg` from [Releases](https://github.com/vanshpatelx/AI-workspace/releases)
-and drag it to Applications. The build is unsigned, so on first launch
-right-click the app and choose **Open**.
+and drag it to Applications.
+
+The build is ad-hoc signed rather than notarized (that needs a paid Apple
+developer account), so macOS will not open it on the first try. Right-click
+the app and choose **Open**, then confirm.
+
+If macOS instead claims the app **"is damaged and can't be opened"**, that is
+Gatekeeper's message for a quarantined app it will not verify — the download
+is fine. Clear the quarantine flag and open it:
+
+```bash
+xattr -cr "/Applications/AI Workspace.app"
+open "/Applications/AI Workspace.app"
+```
+
+> Releases before `v0.1.2` shipped an invalid signature and always showed the
+> "damaged" message; upgrade, or use the command above.
 
 To build it yourself:
 
