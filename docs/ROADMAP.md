@@ -19,7 +19,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 |---|-----------|--------|-------|
 | 6 | Claude Code agent adapter | ✅ | spawns `claude -p` stream-json, streams real output over `chat.delta`, keep-awake per turn |
 | 7 | Session store to disk (persistent chat) | 🚧 | in-memory session→native-id map done; disk persistence pending |
-| 8 | Desktop UI: Electron + React + shadcn/ui | ⬜ | dashboard + chat on top of the existing TransportClient |
+| 8 | Desktop UI: React + Tailwind + shadcn-style | ✅ | dashboard + persistent chat, live WebSocket to Worker (Electron shell = D3) |
 | 9 | Pairing / auth (Desktop trusts a Worker) | ⬜ | use the pairing code minted at init; key exchange |
 | 10 | Approval Center (git push / rm / docker gating) | ⬜ | high-trust feature; end-to-end approve/reject |
 | 11 | Terminal streaming | ⬜ | interactive PTY over the transport |
