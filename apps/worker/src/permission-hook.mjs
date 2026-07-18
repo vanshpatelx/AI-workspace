@@ -41,7 +41,9 @@ try {
   const toolName = input.tool_name ?? "";
   const command = input.tool_input?.command ?? "";
 
-  const configPath = join(homedir(), ".ai-workspace", "worker.json");
+  // Matches the Worker's CONFIG_DIR resolution (env is inherited from it).
+  const configDir = process.env.AIW_HOME ?? join(homedir(), ".ai-workspace");
+  const configPath = join(configDir, "worker.json");
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   const url = `http://127.0.0.1:${config.port + 1}/approval`;
 

@@ -13,6 +13,8 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | 4 | Keep-awake manager (caffeinate power assertion) | ✅ | policy: while-active / always / off, tied to task activity |
 | 5 | Agent detection (which CLIs are installed) | ✅ | probes claude/codex/gemini/openhands/roo on PATH |
 
+| 16 | Multi-machine (many Workers, one Desktop) | ✅ | Desktop multiplexes N Worker connections, each with its own chat/approvals/commands; `AIW_HOME` lets several Workers coexist; verified with 2 live Workers |
+
 ## Next up
 
 | # | Milestone | Status | Notes |

@@ -16,7 +16,12 @@ export interface WorkerConfig {
   createdAt: string;
 }
 
-const CONFIG_DIR = join(homedir(), ".ai-workspace");
+/**
+ * All Worker state lives under one directory. `AIW_HOME` overrides it, which
+ * lets several Workers run on one machine with independent configs and
+ * sessions (used for multi-machine testing).
+ */
+export const CONFIG_DIR = process.env.AIW_HOME ?? join(homedir(), ".ai-workspace");
 const CONFIG_PATH = join(CONFIG_DIR, "worker.json");
 
 export function configPath(): string {

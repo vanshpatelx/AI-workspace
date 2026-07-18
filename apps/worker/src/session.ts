@@ -1,7 +1,7 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { AgentKind, ChatTurn } from "@ai-workspace/protocol";
+import { CONFIG_DIR } from "./config.js";
 
 export interface SessionRecord {
   sessionId: string;
@@ -13,8 +13,7 @@ export interface SessionRecord {
   updatedAt: number;
 }
 
-const STORE_DIR = join(homedir(), ".ai-workspace");
-const STORE_PATH = join(STORE_DIR, "sessions.json");
+const STORE_PATH = join(CONFIG_DIR, "sessions.json");
 
 /**
  * Disk-backed registry of chat sessions.
@@ -43,7 +42,7 @@ export class SessionStore {
 
   private persist(): void {
     try {
-      mkdirSync(STORE_DIR, { recursive: true });
+      mkdirSync(CONFIG_DIR, { recursive: true });
       writeFileSync(this.path, JSON.stringify([...this.sessions.values()], null, 2), "utf8");
     } catch (err) {
       console.error("[worker] failed to persist sessions:", (err as Error).message);
