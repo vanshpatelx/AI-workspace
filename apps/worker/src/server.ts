@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import { exec } from "node:child_process";
+import { createServer, type Server as HttpServer } from "node:http";
 import { PROTOCOL_VERSION, type AgentKind, type WorkspaceSummary } from "@ai-workspace/protocol";
 import { TransportServer, type TransportConnection } from "@ai-workspace/transport";
 import type { WorkerConfig } from "./config.js";
@@ -149,6 +150,53 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     }
   }
 
+  /**
+   * Loopback-only endpoint used by the agent's PreToolUse hook. The agent asks
+   * "may I run this?"; safe commands are auto-allowed, sensitive ones surface
+   * in the Approval Center and block until the user decides.
+   */
+  function startApprovalEndpoint(): HttpServer {
+    const http = createServer((req, res) => {
+      if (req.method !== "POST" || req.url !== "/approval") {
+        res.writeHead(404).end();
+        return;
+      }
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        const reply = (approved: boolean, reason?: string) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ approved, reason }));
+        };
+        try {
+          const { toolName = "", command = "" } = JSON.parse(body || "{}");
+          const sensitive = classifyCommand(command);
+          if (!sensitive) return reply(true);
+
+          const { request, decision } = approvals.create(
+            config.workerId,
+            sensitive.kind,
+            `Agent wants to: ${sensitive.summary.toLowerCase()}`,
+            command || toolName,
+            Date.now(),
+          );
+          console.log(`[worker] agent approval required (${sensitive.kind}): ${command}`);
+          server.broadcast({ type: "approval.request", request });
+
+          const approved = await decision;
+          server.broadcast({ type: "approval.resolved", requestId: request.id, approved });
+          reply(approved, approved ? undefined : "Rejected by user in AI Workspace");
+        } catch (err) {
+          reply(false, `approval endpoint error: ${(err as Error).message}`);
+        }
+      });
+    });
+    http.listen(config.port + 1, "127.0.0.1");
+    return http;
+  }
+
+  const approvalHttp = startApprovalEndpoint();
+
   server = new TransportServer(
     { port: config.port },
     {
@@ -215,10 +263,13 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   console.log(`[worker] listening on ws://127.0.0.1:${config.port}`);
   console.log(`[worker] pairing code: ${config.pairingCode}`);
 
+  console.log(`[worker] approval endpoint on http://127.0.0.1:${config.port + 1}/approval`);
+
   return {
     async stop() {
       approvals.rejectAll();
       keepAwake.stop();
+      approvalHttp.close();
       await server.close();
     },
   };

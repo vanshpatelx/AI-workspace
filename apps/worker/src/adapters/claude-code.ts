@@ -1,6 +1,28 @@
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { AgentKind } from "@ai-workspace/protocol";
 import type { AgentAdapter, AgentTurnInput, AgentTurnResult } from "./types.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const HOOK_PATH = join(HERE, "..", "permission-hook.mjs");
+
+/**
+ * Inline settings that route every Bash tool call through our PreToolUse hook,
+ * so the agent's own dangerous actions land in the Approval Center.
+ */
+function hookSettings(): string {
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [{ type: "command", command: `node ${JSON.stringify(HOOK_PATH)}` }],
+        },
+      ],
+    },
+  });
+}
 
 /**
  * Drives the Claude Code CLI in headless print mode with streaming JSON:
@@ -19,7 +41,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   runTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
     const { text, cwd, resumeSessionId, handlers } = input;
 
-    const args = ["-p", text, "--output-format", "stream-json", "--verbose"];
+    const args = [
+      "-p",
+      text,
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--settings",
+      hookSettings(),
+    ];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
 
     return new Promise((resolve) => {

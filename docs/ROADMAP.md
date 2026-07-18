@@ -22,6 +22,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | 8 | Desktop UI: React + Tailwind + shadcn-style | ✅ | dashboard + persistent chat, live WebSocket to Worker (Electron shell = D3) |
 | 9 | Pairing / auth (Desktop trusts a Worker) | ✅ | pairing code is a shared secret; no state or actions before auth; UI pairing screen persists to localStorage |
 | 10 | Approval Center (git push / rm / docker gating) | ✅ | command runner + classifier; sensitive actions gated, approve/reject in UI, verified (reject blocks, approve runs) |
+| 10b | **Agent** actions routed through the Approval Center | ✅ | Claude Code `PreToolUse` hook → Worker loopback endpoint → Approval Center; agent blocks mid-turn until the user decides |
 | 11 | Terminal streaming | ⬜ | interactive PTY over the transport |
 | 12 | Localhost preview (detect dev servers) | ⬜ | Next.js/Vite/Rails/Django tunneled into Desktop |
 | 13 | File explorer + media preview | ⬜ | browse repo, preview images/video/PDF/markdown |
