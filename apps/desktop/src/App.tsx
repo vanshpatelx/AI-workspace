@@ -11,6 +11,8 @@ import {
   Check,
   X,
   Terminal,
+  KeyRound,
+  LogOut,
 } from "lucide-react";
 import type { ApprovalRequest, WorkspaceSummary } from "@ai-workspace/protocol";
 import { useWorker, type CommandLine, type ConnectionState } from "./lib/useWorker.js";
@@ -20,16 +22,32 @@ import { Button } from "./components/ui/button.js";
 import { Input } from "./components/ui/input.js";
 
 const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
+const TOKEN_KEY = "aiw.pairingToken";
 
 export function App() {
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? "");
   const { connection, workspaces, messages, approvals, commands, notices, send, runCommand, resolveApproval } =
-    useWorker(WORKER_URL);
+    useWorker(WORKER_URL, token);
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const pair = (code: string) => {
+    localStorage.setItem(TOKEN_KEY, code);
+    setToken(code);
+  };
+  const unpair = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    setToken("");
+  };
+
+  // All hooks must run on every render — keep them above the pairing branch.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  if (!token || connection === "unauthorized") {
+    return <PairingScreen rejected={!!token && connection === "unauthorized"} onPair={pair} onClear={unpair} />;
+  }
 
   const submit = () => {
     send(draft);
@@ -38,7 +56,7 @@ export function App() {
 
   return (
     <div className="flex h-screen flex-col">
-      <Header connection={connection} count={workspaces.length} />
+      <Header connection={connection} count={workspaces.length} onUnpair={unpair} />
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[1fr_1.2fr]">
         {/* Dashboard */}
         <section className="flex flex-col gap-3 overflow-y-auto pr-1">
@@ -107,7 +125,15 @@ export function App() {
   );
 }
 
-function Header({ connection, count }: { connection: ConnectionState; count: number }) {
+function Header({
+  connection,
+  count,
+  onUnpair,
+}: {
+  connection: ConnectionState;
+  count: number;
+  onUnpair: () => void;
+}) {
   return (
     <header className="flex items-center justify-between border-b px-5 py-3">
       <div className="flex items-center gap-2">
@@ -119,8 +145,63 @@ function Header({ connection, count }: { connection: ConnectionState; count: num
           <div className="text-xs text-muted-foreground">{count} workstation{count === 1 ? "" : "s"}</div>
         </div>
       </div>
-      <ConnBadge connection={connection} />
+      <div className="flex items-center gap-2">
+        <ConnBadge connection={connection} />
+        <Button size="sm" variant="ghost" onClick={onUnpair} title="Unpair">
+          <LogOut className="h-3.5 w-3.5" />
+        </Button>
+      </div>
     </header>
+  );
+}
+
+function PairingScreen({
+  rejected,
+  onPair,
+  onClear,
+}: {
+  rejected: boolean;
+  onPair: (code: string) => void;
+  onClear: () => void;
+}) {
+  const [code, setCode] = useState("");
+  return (
+    <div className="flex h-screen items-center justify-center p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="items-center text-center">
+          <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <KeyRound className="h-5 w-5" />
+          </div>
+          <CardTitle>Pair with a Worker</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Enter the pairing code shown by <code className="text-xs">aiw worker init</code>.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {rejected && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground">
+              That pairing code was rejected by the Worker.
+            </div>
+          )}
+          <Input
+            autoFocus
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === "Enter" && code.trim() && onPair(code.trim())}
+            placeholder="AIW-XXXX-XXXX"
+            className="text-center font-mono tracking-widest"
+          />
+          <Button className="w-full" disabled={!code.trim()} onClick={() => onPair(code.trim())}>
+            Connect
+          </Button>
+          {rejected && (
+            <Button variant="ghost" size="sm" className="w-full" onClick={onClear}>
+              Clear saved code
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

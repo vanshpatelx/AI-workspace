@@ -37,6 +37,10 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   const adapters = buildAdapters(config);
   const defaultAgent: AgentKind | null = config.agents[0] ?? null;
 
+  // A connection sees no state and can take no action until it authenticates
+  // with the Worker's pairing code.
+  const authed = new Set<string>();
+
   let activeTasks = 0;
 
   function describeSelf(): WorkspaceSummary {
@@ -149,16 +153,32 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     { port: config.port },
     {
       onConnect(conn) {
-        console.log(`[worker] client ${conn.id} connected`);
-        conn.send({ type: "workspaces", items: [describeSelf()] });
-        // Re-advertise any approvals still waiting for a decision.
-        for (const request of approvals.list()) conn.send({ type: "approval.request", request });
+        console.log(`[worker] client ${conn.id} connected (awaiting auth)`);
+        // No state is sent until the client authenticates.
       },
       onMessage(conn, msg) {
+        // Gate: only `hello` is allowed before authentication.
+        if (!authed.has(conn.id) && msg.type !== "hello") {
+          conn.send({ type: "auth.result", ok: false, reason: "not authenticated" });
+          conn.close();
+          return;
+        }
+
         switch (msg.type) {
-          case "hello":
-            console.log(`[worker] hello from ${msg.clientId}`);
+          case "hello": {
+            if (msg.token !== config.pairingCode) {
+              console.log(`[worker] auth REJECTED for ${msg.clientId}`);
+              conn.send({ type: "auth.result", ok: false, reason: "invalid pairing code" });
+              conn.close();
+              return;
+            }
+            authed.add(conn.id);
+            console.log(`[worker] auth OK for ${msg.clientId}`);
+            conn.send({ type: "auth.result", ok: true });
+            conn.send({ type: "workspaces", items: [describeSelf()] });
+            for (const request of approvals.list()) conn.send({ type: "approval.request", request });
             break;
+          }
           case "subscribe":
             conn.send({ type: "workspaces", items: [describeSelf()] });
             break;
@@ -180,6 +200,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         }
       },
       onDisconnect(conn) {
+        authed.delete(conn.id);
         console.log(`[worker] client ${conn.id} disconnected`);
       },
       onError(err) {

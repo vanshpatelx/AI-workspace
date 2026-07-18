@@ -6,7 +6,7 @@ import type {
   WorkspaceSummary,
 } from "@ai-workspace/protocol";
 
-export type ConnectionState = "connecting" | "connected" | "disconnected";
+export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
 
 export interface ChatMessage {
   role: "user" | "agent";
@@ -42,7 +42,7 @@ let commandCounter = 0;
  * workspace state + chat. Reuses the same JSON frames the Node transport
  * speaks, so no browser build of `ws` is needed. Reconnects automatically.
  */
-export function useWorker(url: string): WorkerState {
+export function useWorker(url: string, token: string): WorkerState {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -57,7 +57,12 @@ export function useWorker(url: string): WorkerState {
   }, []);
 
   useEffect(() => {
+    if (!token) {
+      setConnection("unauthorized");
+      return;
+    }
     let closed = false;
+    let unauthorized = false;
     let retry: ReturnType<typeof setTimeout>;
 
     const open = () => {
@@ -66,9 +71,9 @@ export function useWorker(url: string): WorkerState {
       socketRef.current = socket;
 
       socket.onopen = () => {
-        setConnection("connected");
-        socket.send(JSON.stringify({ type: "hello", clientId: "desktop-ui" } satisfies ClientMessage));
-        socket.send(JSON.stringify({ type: "subscribe", workerId: "local" } satisfies ClientMessage));
+        socket.send(
+          JSON.stringify({ type: "hello", clientId: "desktop-ui", token } satisfies ClientMessage),
+        );
       };
 
       socket.onmessage = (event) => {
@@ -79,6 +84,16 @@ export function useWorker(url: string): WorkerState {
           return;
         }
         switch (msg.type) {
+          case "auth.result":
+            if (msg.ok) {
+              setConnection("connected");
+              socket.send(JSON.stringify({ type: "subscribe", workerId: "local" } satisfies ClientMessage));
+            } else {
+              unauthorized = true;
+              setConnection("unauthorized");
+              socket.close();
+            }
+            break;
           case "workspaces":
             setWorkspaces(msg.items);
             break;
@@ -116,6 +131,7 @@ export function useWorker(url: string): WorkerState {
       };
 
       socket.onclose = () => {
+        if (unauthorized) return; // bad token — don't hammer the worker
         setConnection("disconnected");
         if (!closed) retry = setTimeout(open, 1000);
       };
@@ -128,7 +144,7 @@ export function useWorker(url: string): WorkerState {
       clearTimeout(retry);
       socketRef.current?.close();
     };
-  }, [url]);
+  }, [url, token]);
 
   const send = useCallback(
     (text: string) => {

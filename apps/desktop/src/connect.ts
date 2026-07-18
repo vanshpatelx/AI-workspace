@@ -17,7 +17,7 @@ console.log(`[desktop] connecting to ${url}`);
 const client = new TransportClient(url, {
   onOpen() {
     console.log("[desktop] connected");
-    client.send({ type: "hello", clientId: "desktop-cli" });
+    client.send({ type: "hello", clientId: "desktop-cli", token: process.env.AIW_TOKEN ?? "" });
     client.send({ type: "subscribe", workerId: "local" });
     const prompt = process.env.AIW_PROMPT ?? "Reply with a short one-line greeting. Do not use any tools.";
     client.send({ type: "chat.send", sessionId: "s1", text: prompt });

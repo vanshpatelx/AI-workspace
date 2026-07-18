@@ -44,7 +44,7 @@ export interface ApprovalRequest {
 
 /** Desktop -> Worker */
 export type ClientMessage =
-  | { type: "hello"; clientId: string }
+  | { type: "hello"; clientId: string; token: string }
   | { type: "subscribe"; workerId: string }
   | { type: "chat.send"; sessionId: string; text: string }
   | { type: "command.run"; commandId: string; command: string }
@@ -53,6 +53,7 @@ export type ClientMessage =
 
 /** Worker -> Desktop */
 export type ServerMessage =
+  | { type: "auth.result"; ok: boolean; reason?: string }
   | { type: "workspaces"; items: WorkspaceSummary[] }
   | { type: "chat.delta"; sessionId: string; text: string }
   | { type: "approval.request"; request: ApprovalRequest }

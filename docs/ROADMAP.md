@@ -20,7 +20,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | 6 | Claude Code agent adapter | ✅ | spawns `claude -p` stream-json, streams real output over `chat.delta`, keep-awake per turn |
 | 7 | Session store to disk (persistent chat) | 🚧 | in-memory session→native-id map done; disk persistence pending |
 | 8 | Desktop UI: React + Tailwind + shadcn-style | ✅ | dashboard + persistent chat, live WebSocket to Worker (Electron shell = D3) |
-| 9 | Pairing / auth (Desktop trusts a Worker) | ⬜ | use the pairing code minted at init; key exchange |
+| 9 | Pairing / auth (Desktop trusts a Worker) | ✅ | pairing code is a shared secret; no state or actions before auth; UI pairing screen persists to localStorage |
 | 10 | Approval Center (git push / rm / docker gating) | ✅ | command runner + classifier; sensitive actions gated, approve/reject in UI, verified (reject blocks, approve runs) |
 | 11 | Terminal streaming | ⬜ | interactive PTY over the transport |
 | 12 | Localhost preview (detect dev servers) | ⬜ | Next.js/Vite/Rails/Django tunneled into Desktop |
