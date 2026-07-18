@@ -34,7 +34,7 @@ export interface PreviewListing {
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
 
 export interface ChatMessage {
-  role: "user" | "agent" | "tool";
+  role: "user" | "agent" | "tool" | "reasoning";
   text: string;
   /** Present on `tool` messages: what the agent did and to what. */
   tool?: string;
@@ -231,6 +231,15 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                     ...(m.isError ? { isError: m.isError } : {}),
                     ...(m.usage ? { usage: m.usage } : {}),
                   })),
+                },
+              }));
+              break;
+            case "chat.reasoning":
+              patch(target.url, (s) => ({
+                ...s,
+                messages: {
+                  ...s.messages,
+                  [msg.sessionId]: appendReasoning(s.messages[msg.sessionId] ?? [], msg.text),
                 },
               }));
               break;
@@ -553,6 +562,16 @@ function raiseOsNotification(n: WorkerNotification): void {
   } catch {
     // Notification constructor can throw in some embedded contexts.
   }
+}
+
+/**
+ * Reasoning arrives before the answer. It replaces the empty placeholder so a
+ * blank agent bubble does not sit above it, and opens a fresh one after.
+ */
+function appendReasoning(prev: ChatMessage[], text: string): ChatMessage[] {
+  const last = prev[prev.length - 1];
+  const head = last && last.role === "agent" && last.text === "" ? prev.slice(0, -1) : prev;
+  return [...head, { role: "reasoning", text }, { role: "agent", text: "" }];
 }
 
 /**

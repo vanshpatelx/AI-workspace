@@ -265,7 +265,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     switch (evt?.type) {
       case "assistant": {
         for (const block of evt.message?.content ?? []) {
-          if (block?.type === "text" && typeof block.text === "string") {
+          // The agent emits thinking blocks, but their content is encrypted —
+          // only a signature comes through — so there is nothing to show unless
+          // a future version (or another agent) returns real text.
+          if (block?.type === "thinking" && typeof block.thinking === "string") {
+            if (block.thinking.trim()) handlers.onReasoning?.(block.thinking);
+          } else if (block?.type === "text" && typeof block.text === "string") {
             handlers.onDelta(block.text);
           } else if (block?.type === "tool_use" && typeof block.name === "string") {
             handlers.onTool?.(String(block.id ?? ""), block.name, describeToolTarget(block.input));

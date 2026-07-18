@@ -194,6 +194,11 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             reply = reply ? `${reply}\n\n${delta}` : delta;
             conn.send({ type: "chat.delta", sessionId, text: delta });
           },
+          onReasoning: (text) => {
+            if (!text.trim()) return; // never persist an empty reasoning turn
+            sessions.appendTurn(sessionId, { role: "reasoning", text, at: Date.now() });
+            conn.send({ type: "chat.reasoning", sessionId, text });
+          },
           onTool: (toolId, tool, target) => {
             // Recorded as its own turn so the transcript shows what the agent
             // did, not just what it said.

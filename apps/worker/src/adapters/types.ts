@@ -3,6 +3,8 @@ import type { AgentKind, TurnUsage } from "@ai-workspace/protocol";
 export interface AgentTurnHandlers {
   /** Streamed assistant output for this turn. */
   onDelta(text: string): void;
+  /** The agent's own reasoning, when it thinks before answering. */
+  onReasoning?(text: string): void;
   /** The agent used a tool — reported separately so the UI can show the
    *  action rather than burying it in the reply text. */
   onTool?(toolId: string, tool: string, target: string): void;

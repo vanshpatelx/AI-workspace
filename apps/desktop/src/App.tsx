@@ -36,6 +36,8 @@ import { NotificationCenter, type FeedItem } from "./components/NotificationCent
 import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
 import { UsageBar } from "./components/UsageBar.js";
+import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
+import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -113,6 +115,15 @@ export function App() {
         .sort((a, b) => b.notification.at - a.notification.at),
     [workers],
   );
+
+  // Approvals raised by the workspace on screen belong in the transcript,
+  // where the surrounding turn explains why the agent wants this.
+  const inlineApprovals = useMemo(() => {
+    if (!active) return [];
+    return active.worker.approvals.filter(
+      (a) => !a.workspaceId || a.workspaceId === active.workspace.workspaceId,
+    );
+  }, [active]);
 
   const allApprovals = useMemo(
     () =>
@@ -206,7 +217,12 @@ export function App() {
             />
           ))}
 
-          <ApprovalCenter items={allApprovals} onResolve={resolveApproval} />
+          <ApprovalCenter
+            items={allApprovals.filter(
+              (i) => !inlineApprovals.some((a) => a.id === i.approval.id),
+            )}
+            onResolve={resolveApproval}
+          />
 
           {active && (
             <CommandRunner
@@ -329,6 +345,18 @@ export function App() {
                   ))
                 )}
               </div>
+
+              {inlineApprovals.length > 0 && active && (
+                <div className="border-t px-4 py-2">
+                  {inlineApprovals.map((a) => (
+                    <ApprovalCard
+                      key={a.id}
+                      request={a}
+                      onResolve={(approved) => resolveApproval(active.worker.url, a.id, approved)}
+                    />
+                  ))}
+                </div>
+              )}
 
               <div className="flex items-center gap-2 border-t p-3">
                 <Input
@@ -487,6 +515,15 @@ function ConnBadge({ connection, status }: { connection: ConnectionState; status
  * mangles. The user's own messages stay compact and visually distinct.
  */
 function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean }) {
+  if (message.role === "reasoning") {
+    return (
+      <Reasoning className="my-1.5" isStreaming={streaming && !message.text}>
+        <ReasoningTrigger />
+        <ReasoningContent>{message.text}</ReasoningContent>
+      </Reasoning>
+    );
+  }
+
   if (message.role === "tool") {
     return (
       <ToolCall
@@ -527,51 +564,6 @@ function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean
         {message.usage && <UsageBar usage={message.usage} />}
       </div>
     </div>
-  );
-}
-
-function ApprovalCenter({
-  items,
-  onResolve,
-}: {
-  items: { approval: ApprovalRequest; url: string; host: string }[];
-  onResolve: (url: string, id: string, approved: boolean) => void;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <Card className="border-amber-500/40">
-      <CardHeader className="flex-row items-center gap-2 space-y-0 pb-2">
-        <ShieldAlert className="h-4 w-4 text-amber-400" />
-        <CardTitle className="text-sm">Approval Center</CardTitle>
-        <Badge variant="busy" className="ml-auto">
-          {items.length} pending
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {items.map(({ approval: a, url, host }) => (
-          <div key={`${url}:${a.id}`} className="rounded-md border bg-background p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{a.kind}</Badge>
-              <span className="text-sm font-medium">{a.summary}</span>
-              <Badge variant="secondary" className="ml-auto">
-                {host}
-              </Badge>
-            </div>
-            <pre className="mt-2 overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-              {a.details}
-            </pre>
-            <div className="mt-2 flex gap-2">
-              <Button size="sm" onClick={() => onResolve(url, a.id, true)}>
-                <Check className="h-3.5 w-3.5" /> Approve
-              </Button>
-              <Button size="sm" variant="destructive" onClick={() => onResolve(url, a.id, false)}>
-                <X className="h-3.5 w-3.5" /> Reject
-              </Button>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
   );
 }
 

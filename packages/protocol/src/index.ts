@@ -107,7 +107,7 @@ export interface TurnUsage {
  * Desktop can render them as actions rather than as prose in the reply.
  */
 export interface ChatTurn {
-  role: "user" | "agent" | "tool";
+  role: "user" | "agent" | "tool" | "reasoning";
   text: string;
   at: number;
   /** Tool name, e.g. "Bash" or "Edit". Only on `tool` turns. */
@@ -175,6 +175,7 @@ export type ServerMessage =
   | { type: "session.created"; requestId: string; workspaceId: string; sessionId: string }
   | { type: "chat.history"; sessionId: string; messages: ChatTurn[] }
   | { type: "chat.delta"; sessionId: string; text: string }
+  | { type: "chat.reasoning"; sessionId: string; text: string }
   | { type: "chat.tool"; sessionId: string; toolId: string; tool: string; target: string }
   | {
       type: "chat.tool.result";
