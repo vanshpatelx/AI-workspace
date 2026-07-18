@@ -32,6 +32,7 @@ import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { FilesPanel } from "./components/FilesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
+import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -87,6 +88,27 @@ export function App() {
     [workers],
   );
 
+  // Newest-first feed across every machine.
+  const feed: FeedItem[] = useMemo(
+    () =>
+      Object.values(workers)
+        .flatMap((w) =>
+          w.notices.map((n) => ({
+            notification: n,
+            host: w.workspaces[0]?.hostname ?? w.url,
+          })),
+        )
+        .sort((a, b) => b.notification.at - a.notification.at),
+    [workers],
+  );
+
+  // Ask once for OS notification permission; the in-app center works regardless.
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      void Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
   if (targets.length === 0 || adding) {
     return (
       <PairingScreen
@@ -100,6 +122,7 @@ export function App() {
     <div className="flex h-screen flex-col">
       <Header
         workstations={Object.values(workers)}
+        feed={feed}
         onAdd={() => setAdding(true)}
       />
       <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[1fr_1.2fr]">
@@ -250,7 +273,15 @@ export function App() {
   );
 }
 
-function Header({ workstations, onAdd }: { workstations: WorkerState[]; onAdd: () => void }) {
+function Header({
+  workstations,
+  feed,
+  onAdd,
+}: {
+  workstations: WorkerState[];
+  feed: FeedItem[];
+  onAdd: () => void;
+}) {
   const online = workstations.filter((w) => w.connection === "connected").length;
   return (
     <header className="flex items-center justify-between border-b px-5 py-3">
@@ -265,9 +296,12 @@ function Header({ workstations, onAdd }: { workstations: WorkerState[]; onAdd: (
           </div>
         </div>
       </div>
-      <Button size="sm" variant="outline" onClick={onAdd}>
-        <Plus className="h-3.5 w-3.5" /> Add workstation
-      </Button>
+      <div className="flex items-center gap-1">
+        <NotificationCenter items={feed} />
+        <Button size="sm" variant="outline" onClick={onAdd}>
+          <Plus className="h-3.5 w-3.5" /> Add workstation
+        </Button>
+      </div>
     </header>
   );
 }

@@ -1,7 +1,13 @@
 import { hostname } from "node:os";
 import { exec } from "node:child_process";
 import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
-import { PROTOCOL_VERSION, type AgentKind, type WorkspaceSummary } from "@ai-workspace/protocol";
+import {
+  PROTOCOL_VERSION,
+  type AgentKind,
+  type NotificationKind,
+  type WorkerNotification,
+  type WorkspaceSummary,
+} from "@ai-workspace/protocol";
 import { TransportServer, type TransportConnection } from "@ai-workspace/transport";
 import type { WorkerConfig } from "./config.js";
 import { KeepAwake } from "./keepawake.js";
@@ -47,6 +53,25 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   const files = new FileService(process.cwd());
 
+  let notifySeq = 0;
+  /** Raise a notification to every connected Desktop. */
+  function notify(
+    kind: NotificationKind,
+    level: "info" | "warn" | "error",
+    title: string,
+    body?: string,
+  ): void {
+    const notification: WorkerNotification = {
+      id: `n${++notifySeq}`,
+      kind,
+      level,
+      title,
+      at: Date.now(),
+    };
+    if (body) notification.body = body.slice(0, 400);
+    server.broadcast({ type: "notification", notification });
+  }
+
   const terminals = new TerminalManager(process.cwd(), {
     onData: (terminalId, data) => server.broadcast({ type: "terminal.output", terminalId, data }),
     onExit: (terminalId, code) => server.broadcast({ type: "terminal.exit", terminalId, code }),
@@ -72,12 +97,12 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   async function handleChat(conn: TransportConnection, sessionId: string, text: string): Promise<void> {
     if (!defaultAgent) {
-      conn.send({ type: "notification", level: "error", text: "No agent configured on this Worker." });
+      notify("agent-error", "error", "No agent configured on this Worker");
       return;
     }
     const adapter = adapters.get(defaultAgent);
     if (!adapter) {
-      conn.send({ type: "notification", level: "error", text: `No adapter for ${defaultAgent}.` });
+      notify("agent-error", "error", `No adapter for ${defaultAgent}`);
       return;
     }
 
@@ -101,11 +126,14 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             conn.send({ type: "chat.delta", sessionId, text: delta });
           },
           onNotice: (notice) => conn.send({ type: "chat.delta", sessionId, text: `\n${notice}\n` }),
-          onError: (message) => conn.send({ type: "notification", level: "error", text: message }),
+          onError: (message) => notify("agent-error", "error", "Agent error", message),
         },
       });
       sessions.setNativeSession(sessionId, result.nativeSessionId, Date.now());
-      if (reply) sessions.appendTurn(sessionId, { role: "agent", text: reply, at: Date.now() });
+      if (reply) {
+        sessions.appendTurn(sessionId, { role: "agent", text: reply, at: Date.now() });
+        notify("task-complete", "info", "Agent finished", reply);
+      }
     } finally {
       activeTasks = Math.max(0, activeTasks - 1);
       keepAwake.taskEnded();
@@ -136,6 +164,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
       );
       // Broadcast so any connected Desktop can approve.
       server.broadcast({ type: "approval.request", request });
+      notify("approval-waiting", "warn", `Approval needed: ${sensitive.summary}`, command);
       console.log(`[worker] approval required (${sensitive.kind}): ${command}`);
 
       const approved = await decision;
@@ -159,6 +188,13 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     try {
       const { code, output } = await runShell(command, process.cwd());
       conn.send({ type: "command.result", commandId, code, output, approved: true });
+      if (code === 0) {
+        notify("command-complete", "info", `Finished: ${command}`, output);
+      } else {
+        // Covers the PRD's "test failures" / "build success" cases — a failing
+        // test or build surfaces here with its exit code and output.
+        notify("command-failed", "error", `Failed (exit ${code}): ${command}`, output);
+      }
     } finally {
       activeTasks = Math.max(0, activeTasks - 1);
       keepAwake.taskEnded();
@@ -224,6 +260,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
           );
           console.log(`[worker] agent approval required (${sensitive.kind}): ${command}`);
           server.broadcast({ type: "approval.request", request });
+          notify("approval-waiting", "warn", `Agent needs approval: ${sensitive.summary}`, command);
 
           const approved = await decision;
           server.broadcast({ type: "approval.resolved", requestId: request.id, approved });
@@ -296,7 +333,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             const err = terminals.start(msg.terminalId, msg.cols, msg.rows);
             if (err) {
               console.error(`[worker] ${err}`);
-              conn.send({ type: "notification", level: "error", text: err });
+              notify("agent-error", "error", "Terminal failed to start", err);
               conn.send({ type: "terminal.exit", terminalId: msg.terminalId, code: null });
             } else {
               console.log(`[worker] terminal ${msg.terminalId} started`);

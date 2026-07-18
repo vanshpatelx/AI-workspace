@@ -28,7 +28,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | 11 | Terminal streaming | ✅ | real PTY (node-pty) streamed to xterm.js; start/input/resize/close + exit; verified with live shell output |
 | 12 | Localhost preview (detect dev servers) | ✅ | lsof-based detection + HTML probe, framework guess, framed through a Worker-side proxy so previews work for remote Workers and past X-Frame-Options |
 | 13 | File explorer + media preview | ✅ | browse the repo, inline preview of text/images/video/audio/PDF via data URIs; path traversal blocked at the Worker (verified over the raw protocol) |
-| 14 | Notifications | ⬜ | task done / test failed / build ok / waiting approval |
+| 14 | Notifications | ✅ | structured events (task done, command complete/failed, approval waiting, agent error) in an in-app center with unread badge, plus native OS notifications |
 | 15 | Optional stateless relay | ⬜ | forward encrypted frames for remote access without VPN |
 
 ## Distribution

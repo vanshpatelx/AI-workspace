@@ -26,6 +26,25 @@ export interface WorkspaceSummary {
   mem: number | null; // 0..1
 }
 
+/** Why the Worker raised a notification. */
+export type NotificationKind =
+  | "task-complete"
+  | "command-complete"
+  | "command-failed"
+  | "approval-waiting"
+  | "agent-error"
+  | "info";
+
+export interface WorkerNotification {
+  id: string;
+  kind: NotificationKind;
+  level: "info" | "warn" | "error";
+  title: string;
+  /** Optional detail line (command output snippet, error text, ...). */
+  body?: string;
+  at: number;
+}
+
 /** A local dev server detected on the Worker's machine. */
 export interface PreviewServer {
   port: number;
@@ -115,7 +134,7 @@ export type ServerMessage =
        */
       proxyBase: string;
     }
-  | { type: "notification"; level: "info" | "warn" | "error"; text: string };
+  | { type: "notification"; notification: WorkerNotification };
 
 export type WireMessage = ClientMessage | ServerMessage;
 

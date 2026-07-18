@@ -32,7 +32,9 @@ const client = new TransportClient(url, {
         console.log(`[desktop] chat(${msg.sessionId}): ${msg.text}`);
         break;
       case "notification":
-        console.log(`[desktop] notify(${msg.level}): ${msg.text}`);
+        console.log(
+          `[desktop] notify(${msg.notification.level}/${msg.notification.kind}): ${msg.notification.title}`,
+        );
         break;
       default:
         break;

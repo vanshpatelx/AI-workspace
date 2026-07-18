@@ -5,6 +5,7 @@ import type {
   FileEntry,
   PreviewServer,
   ServerMessage,
+  WorkerNotification,
   WorkspaceSummary,
 } from "@ai-workspace/protocol";
 
@@ -55,7 +56,7 @@ export interface WorkerState {
   messages: ChatMessage[];
   approvals: ApprovalRequest[];
   commands: CommandLine[];
-  notices: string[];
+  notices: WorkerNotification[];
 }
 
 /** Streamed PTY bytes, delivered outside React state to keep xterm fast. */
@@ -267,8 +268,10 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
             case "notification":
               patch(target.url, (s) => ({
                 ...s,
-                notices: [`${msg.level}: ${msg.text}`, ...s.notices].slice(0, 20),
+                notices: [msg.notification, ...s.notices].slice(0, 50),
               }));
+              // Also raise a real OS notification (no-op without permission).
+              raiseOsNotification(msg.notification);
               break;
             default:
               break;
@@ -390,6 +393,27 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
   );
 
   return { workers, send, runCommand, resolveApproval, terminal, fs, preview };
+}
+
+/**
+ * Surface a Worker notification as a native OS notification.
+ *
+ * Silently does nothing unless the user has granted permission — the in-app
+ * notification center is always the source of truth, this is the extra nudge
+ * for when the window isn't focused.
+ */
+function raiseOsNotification(n: WorkerNotification): void {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const notification = new Notification(n.title, {
+      body: n.body?.slice(0, 180),
+      tag: n.id,
+    });
+    // Approvals block real work, so keep them on screen; auto-dismiss the rest.
+    if (n.kind !== "approval-waiting") setTimeout(() => notification.close(), 6000);
+  } catch {
+    // Notification constructor can throw in some embedded contexts.
+  }
 }
 
 /** Append streamed agent text to the last (in-progress) agent message. */
