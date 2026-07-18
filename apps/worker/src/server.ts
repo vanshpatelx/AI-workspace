@@ -73,23 +73,29 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
     const now = Date.now();
     const record = sessions.ensure(sessionId, defaultAgent, now);
+    sessions.appendTurn(sessionId, { role: "user", text, at: now });
 
     activeTasks++;
     keepAwake.taskStarted();
     server.broadcast({ type: "workspaces", items: [describeSelf()] });
 
+    let reply = "";
     try {
       const result = await adapter.runTurn({
         text,
         cwd: process.cwd(),
         resumeSessionId: record.nativeSessionId,
         handlers: {
-          onDelta: (delta) => conn.send({ type: "chat.delta", sessionId, text: delta }),
+          onDelta: (delta) => {
+            reply += delta;
+            conn.send({ type: "chat.delta", sessionId, text: delta });
+          },
           onNotice: (notice) => conn.send({ type: "chat.delta", sessionId, text: `\n${notice}\n` }),
           onError: (message) => conn.send({ type: "notification", level: "error", text: message }),
         },
       });
       sessions.setNativeSession(sessionId, result.nativeSessionId, Date.now());
+      if (reply) sessions.appendTurn(sessionId, { role: "agent", text: reply, at: Date.now() });
     } finally {
       activeTasks = Math.max(0, activeTasks - 1);
       keepAwake.taskEnded();
@@ -224,6 +230,13 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             console.log(`[worker] auth OK for ${msg.clientId}`);
             conn.send({ type: "auth.result", ok: true });
             conn.send({ type: "workspaces", items: [describeSelf()] });
+            // Rehydrate persisted conversations so the Desktop reconnects with
+            // full context instead of an empty chat.
+            for (const s of sessions.list()) {
+              if (s.messages.length > 0) {
+                conn.send({ type: "chat.history", sessionId: s.sessionId, messages: s.messages });
+              }
+            }
             for (const request of approvals.list()) conn.send({ type: "approval.request", request });
             break;
           }

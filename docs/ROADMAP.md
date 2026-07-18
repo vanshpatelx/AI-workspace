@@ -18,7 +18,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
 | 6 | Claude Code agent adapter | ✅ | spawns `claude -p` stream-json, streams real output over `chat.delta`, keep-awake per turn |
-| 7 | Session store to disk (persistent chat) | 🚧 | in-memory session→native-id map done; disk persistence pending |
+| 7 | Session store to disk (persistent chat) | ✅ | transcript + agent native session id persisted to `~/.ai-workspace/sessions.json`; history replayed on connect; verified across a Worker restart (agent still recalled context) |
 | 8 | Desktop UI: React + Tailwind + shadcn-style | ✅ | dashboard + persistent chat, live WebSocket to Worker (Electron shell = D3) |
 | 9 | Pairing / auth (Desktop trusts a Worker) | ✅ | pairing code is a shared secret; no state or actions before auth; UI pairing screen persists to localStorage |
 | 10 | Approval Center (git push / rm / docker gating) | ✅ | command runner + classifier; sensitive actions gated, approve/reject in UI, verified (reject blocks, approve runs) |

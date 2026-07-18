@@ -97,6 +97,12 @@ export function useWorker(url: string, token: string): WorkerState {
           case "workspaces":
             setWorkspaces(msg.items);
             break;
+          case "chat.history":
+            // Rehydrate a persisted conversation on (re)connect.
+            if (msg.sessionId === SESSION_ID) {
+              setMessages(msg.messages.map((m) => ({ role: m.role, text: m.text })));
+            }
+            break;
           case "chat.delta":
             setMessages((prev) => appendAgentDelta(prev, msg.text));
             break;

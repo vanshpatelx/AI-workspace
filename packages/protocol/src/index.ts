@@ -26,6 +26,13 @@ export interface WorkspaceSummary {
   mem: number | null; // 0..1
 }
 
+/** One persisted message in a session transcript. */
+export interface ChatTurn {
+  role: "user" | "agent";
+  text: string;
+  at: number;
+}
+
 export type ApprovalKind =
   | "git-push"
   | "file-delete"
@@ -55,6 +62,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: "auth.result"; ok: boolean; reason?: string }
   | { type: "workspaces"; items: WorkspaceSummary[] }
+  | { type: "chat.history"; sessionId: string; messages: ChatTurn[] }
   | { type: "chat.delta"; sessionId: string; text: string }
   | { type: "approval.request"; request: ApprovalRequest }
   | { type: "approval.resolved"; requestId: string; approved: boolean }
