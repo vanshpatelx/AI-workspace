@@ -36,6 +36,26 @@ export interface RunningWorker {
   stop(): Promise<void>;
 }
 
+/** Human-readable WebSocket close codes, for diagnosing dropped Desktops. */
+function describeCloseCode(code?: number): string {
+  switch (code) {
+    case 1000:
+      return "normal close";
+    case 1001:
+      return "going away";
+    case 1005:
+      return "no status (closed by client)";
+    case 1006:
+      return "abnormal — connection lost without a close frame";
+    case 1011:
+      return "server error";
+    case 1012:
+      return "restarting";
+    default:
+      return "unknown";
+  }
+}
+
 function buildAdapters(config: WorkerConfig): Map<AgentKind, AgentAdapter> {
   const adapters = new Map<AgentKind, AgentAdapter>();
   if (config.agents.includes("claude-code")) {
@@ -565,9 +585,14 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             break;
         }
       },
-      onDisconnect(conn) {
+      onDisconnect(conn, code, reason) {
         authed.delete(conn.id);
-        console.log(`[worker] client ${conn.id} disconnected`);
+        // The close code says a lot: 1000/1001 is a normal navigate-away or
+        // reload, 1006 means the connection dropped without a close frame.
+        const detail = code === 1001 ? "page navigated/reloaded" : describeCloseCode(code);
+        console.log(
+          `[worker] client ${conn.id} disconnected (code=${code ?? "?"} ${detail}${reason ? `: ${reason}` : ""})`,
+        );
       },
       onError(err) {
         console.error("[worker] transport error:", err.message);

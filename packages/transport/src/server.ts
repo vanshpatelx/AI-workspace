@@ -11,7 +11,9 @@ export interface TransportConnection {
 export interface TransportServerHandlers {
   onConnect?(conn: TransportConnection): void;
   onMessage?(conn: TransportConnection, msg: ClientMessage): void;
-  onDisconnect?(conn: TransportConnection): void;
+  /** `code`/`reason` come from the WebSocket close frame — useful for
+   *  telling a page reload (1001) apart from an abnormal drop (1006). */
+  onDisconnect?(conn: TransportConnection, code?: number, reason?: string): void;
   onError?(err: Error): void;
 }
 
@@ -80,9 +82,28 @@ export class TransportServer {
       }
     });
 
-    socket.on("close", () => {
+    // Keepalive: without it a half-open connection (sleeping laptop, dropped
+    // VPN, crashed tab) looks alive forever and the Worker keeps writing into
+    // a socket nobody is reading.
+    let alive = true;
+    socket.on("pong", () => (alive = true));
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        socket.terminate();
+        return;
+      }
+      alive = false;
+      try {
+        socket.ping();
+      } catch {
+        socket.terminate();
+      }
+    }, 30_000);
+
+    socket.on("close", (code: number, reason: Buffer) => {
+      clearInterval(heartbeat);
       this.conns.delete(id);
-      this.handlers.onDisconnect?.(conn);
+      this.handlers.onDisconnect?.(conn, code, reason?.toString());
     });
 
     socket.on("error", (err) => this.handlers.onError?.(err as Error));
