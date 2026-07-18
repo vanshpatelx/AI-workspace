@@ -83,6 +83,12 @@ jobs:
           aiw worker start > /tmp/worker.log 2>&1 &
           aiw ui > /tmp/ui.log 2>&1 &
           sleep 6
-          grep -q "listening on ws://" /tmp/worker.log
+          # Assert on the address and the served page, not on log prose —
+          # restyling the log should not fail the build.
+          grep -q "ws://127.0.0.1:4501" /tmp/worker.log
           curl -fsS http://127.0.0.1:5180/ | grep -q "<title>AI Workspace</title>"
+          # Log output is redirected here, so it must contain no escape codes.
+          if grep -q $'\e' /tmp/worker.log; then
+            echo "worker log contains ANSI escapes when redirected"; exit 1
+          fi
           cat /tmp/worker.log
