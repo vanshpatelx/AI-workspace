@@ -12,6 +12,7 @@ import {
   type AgentKind,
   type MachineSummary,
   type NotificationKind,
+  type TurnUsage,
   type WorkerNotification,
 } from "@ai-workspace/protocol";
 import { TransportServer, type TransportConnection } from "@ai-workspace/transport";
@@ -178,6 +179,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     markBusy(workspaceId, "agent running");
 
     let reply = "";
+    let lastUsage: TurnUsage | undefined;
     try {
       const result = await adapter.runTurn({
         // The agent runs in the workspace's directory, not the Worker's.
@@ -186,10 +188,13 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         resumeSessionId: record.nativeSessionId,
         handlers: {
           onDelta: (delta) => {
-            reply += delta;
+            // Each delta is a complete text block from the agent. Joining them
+            // bare runs a paragraph into the table that follows it, which then
+            // renders as raw pipes once the transcript is replayed.
+            reply = reply ? `${reply}\n\n${delta}` : delta;
             conn.send({ type: "chat.delta", sessionId, text: delta });
           },
-          onTool: (tool, target) => {
+          onTool: (toolId, tool, target) => {
             // Recorded as its own turn so the transcript shows what the agent
             // did, not just what it said.
             sessions.appendTurn(sessionId, {
@@ -197,9 +202,18 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               text: "",
               tool,
               target,
+              toolId,
               at: Date.now(),
             });
-            conn.send({ type: "chat.tool", sessionId, tool, target });
+            conn.send({ type: "chat.tool", sessionId, toolId, tool, target });
+          },
+          onToolResult: (toolId, output, isError) => {
+            sessions.attachToolResult(sessionId, toolId, output, isError);
+            conn.send({ type: "chat.tool.result", sessionId, toolId, output, isError });
+          },
+          onUsage: (usage) => {
+            lastUsage = usage;
+            conn.send({ type: "chat.usage", sessionId, usage });
           },
           onNotice: (notice) => conn.send({ type: "chat.delta", sessionId, text: `\n_${notice}_\n` }),
           onError: (message) => notify("agent-error", "error", "Agent error", message),
@@ -207,7 +221,12 @@ export function startWorker(config: WorkerConfig): RunningWorker {
       });
       sessions.setNativeSession(sessionId, result.nativeSessionId, Date.now());
       if (reply) {
-        sessions.appendTurn(sessionId, { role: "agent", text: reply, at: Date.now() });
+        sessions.appendTurn(sessionId, {
+          role: "agent",
+          text: reply,
+          at: Date.now(),
+          ...(lastUsage ? { usage: lastUsage } : {}),
+        });
         notify("task-complete", "info", "Agent finished", reply);
       }
     } finally {

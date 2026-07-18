@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   FileText,
   FilePen,
@@ -7,6 +8,8 @@ import {
   Globe,
   ListTodo,
   Wrench,
+  ChevronRight,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,19 +28,64 @@ const TOOL_STYLES: Record<string, { Icon: LucideIcon; accent: string }> = {
 };
 
 /**
- * A single agent action, rendered as a compact row rather than a line of text
- * in the reply — the same idea as the tool rows in the VS Code extension.
+ * A single agent action, rendered as a compact row that expands to reveal what
+ * the tool returned — the same shape as the tool rows in an editor extension.
+ * Collapsed by default: a Read can return a whole file.
  */
-export function ToolCall({ tool, target }: { tool: string; target?: string }) {
+export function ToolCall({
+  tool,
+  target,
+  output,
+  isError,
+}: {
+  tool: string;
+  target?: string;
+  output?: string;
+  isError?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
   const { Icon, accent } = TOOL_STYLES[tool] ?? { Icon: Wrench, accent: "text-muted-foreground" };
+  const expandable = Boolean(output);
+
   return (
-    <div className="my-1.5 flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5">
-      <Icon className={`h-3.5 w-3.5 shrink-0 ${accent}`} />
-      <span className="shrink-0 text-xs font-medium">{tool}</span>
-      {target && (
-        <code className="truncate font-mono text-[11px] text-muted-foreground" title={target}>
-          {target}
-        </code>
+    <div
+      className={`my-1.5 overflow-hidden rounded-md border bg-muted/30 ${
+        isError ? "border-destructive/50" : "border-border/60"
+      }`}
+    >
+      <button
+        onClick={() => expandable && setOpen((o) => !o)}
+        disabled={!expandable}
+        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left ${
+          expandable ? "hover:bg-muted/50" : "cursor-default"
+        }`}
+      >
+        {expandable ? (
+          <ChevronRight
+            className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+          />
+        ) : (
+          <span className="w-3 shrink-0" />
+        )}
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${isError ? "text-destructive" : accent}`} />
+        <span className="shrink-0 text-xs font-medium">{tool}</span>
+        {target && (
+          <code className="truncate font-mono text-[11px] text-muted-foreground" title={target}>
+            {target}
+          </code>
+        )}
+        {isError && <AlertTriangle className="ml-auto h-3 w-3 shrink-0 text-destructive" />}
+        {expandable && !isError && (
+          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+            {open ? "hide" : "output"}
+          </span>
+        )}
+      </button>
+
+      {open && output && (
+        <pre className="max-h-72 overflow-auto border-t bg-[#0d0d0f] px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+          {output}
+        </pre>
       )}
     </div>
   );

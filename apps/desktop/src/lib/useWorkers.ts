@@ -5,6 +5,7 @@ import type {
   FileEntry,
   MachineSummary,
   PreviewServer,
+  TurnUsage,
   ServerMessage,
   WorkerNotification,
   Workspace,
@@ -38,6 +39,12 @@ export interface ChatMessage {
   /** Present on `tool` messages: what the agent did and to what. */
   tool?: string;
   target?: string;
+  toolId?: string;
+  /** What the tool returned, revealed when the action is expanded. */
+  output?: string;
+  isError?: boolean;
+  /** Token/cost accounting on the agent turn that ended the round. */
+  usage?: TurnUsage;
 }
 
 export interface CommandLine {
@@ -219,6 +226,10 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                     text: m.text,
                     ...(m.tool ? { tool: m.tool } : {}),
                     ...(m.target ? { target: m.target } : {}),
+                    ...(m.toolId ? { toolId: m.toolId } : {}),
+                    ...(m.output ? { output: m.output } : {}),
+                    ...(m.isError ? { isError: m.isError } : {}),
+                    ...(m.usage ? { usage: m.usage } : {}),
                   })),
                 },
               }));
@@ -230,6 +241,7 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                   ...s.messages,
                   [msg.sessionId]: appendTool(
                     s.messages[msg.sessionId] ?? [],
+                    msg.toolId,
                     msg.tool,
                     msg.target,
                   ),
@@ -321,6 +333,29 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               pending?.reject(new Error(msg.message));
               break;
             }
+            case "chat.tool.result":
+              patch(target.url, (s) => ({
+                ...s,
+                messages: {
+                  ...s.messages,
+                  [msg.sessionId]: (s.messages[msg.sessionId] ?? []).map((m) =>
+                    m.role === "tool" && m.toolId === msg.toolId
+                      ? { ...m, output: msg.output, isError: msg.isError }
+                      : m,
+                  ),
+                },
+              }));
+              break;
+            case "chat.usage":
+              // Lands on the agent turn currently being streamed.
+              patch(target.url, (s) => ({
+                ...s,
+                messages: {
+                  ...s.messages,
+                  [msg.sessionId]: attachUsage(s.messages[msg.sessionId] ?? [], msg.usage),
+                },
+              }));
+              break;
             case "notification":
               patch(target.url, (s) => ({
                 ...s,
@@ -527,19 +562,41 @@ function raiseOsNotification(n: WorkerNotification): void {
  * off, the action recorded, and a fresh block opened for whatever the agent
  * says next.
  */
-function appendTool(prev: ChatMessage[], tool: string, target: string): ChatMessage[] {
-  const action: ChatMessage = { role: "tool", text: "", tool, target };
+function appendTool(
+  prev: ChatMessage[],
+  toolId: string,
+  tool: string,
+  target: string,
+): ChatMessage[] {
+  const action: ChatMessage = { role: "tool", text: "", tool, target, toolId };
   const last = prev[prev.length - 1];
   // Drop an untouched placeholder rather than leaving an empty bubble behind.
   const head = last && last.role === "agent" && last.text === "" ? prev.slice(0, -1) : prev;
   return [...head, action, { role: "agent", text: "" }];
 }
 
-/** Append streamed agent text to the last (in-progress) agent message. */
+/** Attach usage to the most recent agent message with text in it. */
+function attachUsage(prev: ChatMessage[], usage: TurnUsage): ChatMessage[] {
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const m = prev[i];
+    if (m && m.role === "agent" && m.text) {
+      return [...prev.slice(0, i), { ...m, usage }, ...prev.slice(i + 1)];
+    }
+  }
+  return prev;
+}
+
+/**
+ * Append a streamed text block to the in-progress agent message.
+ *
+ * Blocks are separated by a blank line: markdown needs one before a table or
+ * list, and running two blocks together turns the second into literal pipes.
+ */
 function appendAgentDelta(prev: ChatMessage[], delta: string): ChatMessage[] {
   const last = prev[prev.length - 1];
   if (last && last.role === "agent") {
-    return [...prev.slice(0, -1), { role: "agent", text: last.text + delta }];
+    const text = last.text ? `${last.text}\n\n${delta}` : delta;
+    return [...prev.slice(0, -1), { ...last, text }];
   }
   return [...prev, { role: "agent", text: delta }];
 }

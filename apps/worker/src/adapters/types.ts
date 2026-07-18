@@ -1,11 +1,15 @@
-import type { AgentKind } from "@ai-workspace/protocol";
+import type { AgentKind, TurnUsage } from "@ai-workspace/protocol";
 
 export interface AgentTurnHandlers {
   /** Streamed assistant output for this turn. */
   onDelta(text: string): void;
   /** The agent used a tool — reported separately so the UI can show the
    *  action rather than burying it in the reply text. */
-  onTool?(tool: string, target: string): void;
+  onTool?(toolId: string, tool: string, target: string): void;
+  /** What that tool returned, matched to the call by `toolId`. */
+  onToolResult?(toolId: string, output: string, isError: boolean): void;
+  /** Token, cost and timing accounting once the turn completes. */
+  onUsage?(usage: TurnUsage): void;
   /** Non-fatal status the user should see (e.g. a session had to restart). */
   onNotice?(text: string): void;
   /** Fatal error for this turn. */

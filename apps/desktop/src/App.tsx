@@ -35,6 +35,7 @@ import { PreviewPanel } from "./components/PreviewPanel.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
+import { UsageBar } from "./components/UsageBar.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -487,7 +488,14 @@ function ConnBadge({ connection, status }: { connection: ConnectionState; status
  */
 function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean }) {
   if (message.role === "tool") {
-    return <ToolCall tool={message.tool ?? "Tool"} target={message.target} />;
+    return (
+      <ToolCall
+        tool={message.tool ?? "Tool"}
+        target={message.target}
+        output={message.output}
+        isError={message.isError}
+      />
+    );
   }
 
   if (message.role === "user") {
@@ -516,6 +524,7 @@ function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean
       </div>
       <div className="min-w-0 flex-1">
         <Markdown text={message.text} />
+        {message.usage && <UsageBar usage={message.usage} />}
       </div>
     </div>
   );

@@ -89,6 +89,22 @@ export class SessionStore {
     this.persist();
   }
 
+  /** Attach a tool's output to the call it belongs to. */
+  attachToolResult(sessionId: string, toolId: string, output: string, isError: boolean): void {
+    const record = this.sessions.get(sessionId);
+    if (!record) return;
+    // Search backwards: the matching call is almost always the most recent.
+    for (let i = record.messages.length - 1; i >= 0; i--) {
+      const turn = record.messages[i];
+      if (turn && turn.role === "tool" && turn.toolId === toolId) {
+        turn.output = output;
+        turn.isError = isError;
+        this.persist();
+        return;
+      }
+    }
+  }
+
   /** Record the agent's native session id after a turn completes. */
   setNativeSession(sessionId: string, nativeSessionId: string | null, now: number): void {
     const record = this.sessions.get(sessionId);

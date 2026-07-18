@@ -85,6 +85,21 @@ export interface FileEntry {
   size: number;
 }
 
+/** What a turn cost, and how much of the context window it occupies. */
+export interface TurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** Tokens occupying the context window — input plus everything cached. */
+  contextTokens: number;
+  /** Size of the model's context window, when the agent reports it. */
+  contextWindow: number | null;
+  costUsd: number;
+  durationMs: number;
+  model: string | null;
+}
+
 /**
  * One entry in a session transcript.
  *
@@ -99,6 +114,13 @@ export interface ChatTurn {
   tool?: string;
   /** What it acted on — a file path, a command, a query. */
   target?: string;
+  /** Correlates a tool call with the result that comes back for it. */
+  toolId?: string;
+  /** What the tool returned, shown when the action is expanded. */
+  output?: string;
+  isError?: boolean;
+  /** Token/cost accounting, attached to the agent turn that closed the round. */
+  usage?: TurnUsage;
 }
 
 export type ApprovalKind =
@@ -153,7 +175,15 @@ export type ServerMessage =
   | { type: "session.created"; requestId: string; workspaceId: string; sessionId: string }
   | { type: "chat.history"; sessionId: string; messages: ChatTurn[] }
   | { type: "chat.delta"; sessionId: string; text: string }
-  | { type: "chat.tool"; sessionId: string; tool: string; target: string }
+  | { type: "chat.tool"; sessionId: string; toolId: string; tool: string; target: string }
+  | {
+      type: "chat.tool.result";
+      sessionId: string;
+      toolId: string;
+      output: string;
+      isError: boolean;
+    }
+  | { type: "chat.usage"; sessionId: string; usage: TurnUsage }
   | { type: "approval.request"; request: ApprovalRequest }
   | { type: "approval.resolved"; requestId: string; approved: boolean }
   | { type: "command.result"; commandId: string; code: number | null; output: string; approved: boolean }

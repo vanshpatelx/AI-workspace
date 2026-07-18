@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { AgentKind } from "@ai-workspace/protocol";
+import type { AgentKind, TurnUsage } from "@ai-workspace/protocol";
 import type { AgentAdapter, AgentTurnInput, AgentTurnResult } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -10,6 +10,61 @@ const HOOK_PATH = join(HERE, "..", "permission-hook.mjs");
 /** The agent reports an unresolvable --resume target with this message. */
 function isMissingSession(text: string): boolean {
   return /No conversation found with session ID/i.test(text);
+}
+
+/** Tool output arrives as a string or as content blocks; flatten to text. */
+function stringifyToolOutput(content: unknown): string {
+  const text =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((c) =>
+              c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string"
+                ? (c as { text: string }).text
+                : "",
+            )
+            .join("")
+        : "";
+  // Cap it: a tool can return a whole file, and this is a preview.
+  const MAX = 8000;
+  return text.length > MAX ? `${text.slice(0, MAX)}\n… (${text.length - MAX} more characters)` : text;
+}
+
+/**
+ * Token, cost and timing accounting from the agent's final result event.
+ *
+ * `contextTokens` is what actually occupies the window — fresh input plus
+ * everything read from or written to the cache — which is the number worth
+ * showing against the model's limit.
+ */
+function readUsage(evt: any, mainModel: string | null): TurnUsage {
+  const u = evt?.usage ?? {};
+  const inputTokens = Number(u.input_tokens ?? 0);
+  const outputTokens = Number(u.output_tokens ?? 0);
+  const cacheReadTokens = Number(u.cache_read_input_tokens ?? 0);
+  const cacheCreationTokens = Number(u.cache_creation_input_tokens ?? 0);
+
+  // A turn can touch several models — the agent runs small helper models for
+  // background work, and those can out-token the one doing the actual job.
+  // The session's declared model is the one the user cares about, so prefer
+  // it and only fall back to the largest context window on offer.
+  const models = Object.entries(evt?.modelUsage ?? {}) as [string, any][];
+  const chosen =
+    models.find(([name]) => name === mainModel) ??
+    models.sort((a, b) => (b[1]?.contextWindow ?? 0) - (a[1]?.contextWindow ?? 0))[0];
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    contextTokens: inputTokens + cacheReadTokens + cacheCreationTokens,
+    contextWindow: chosen?.[1]?.contextWindow ?? null,
+    costUsd: Number(evt?.total_cost_usd ?? 0),
+    durationMs: Number(evt?.duration_ms ?? 0),
+    model: mainModel ?? chosen?.[0] ?? null,
+  };
 }
 
 /**
@@ -113,6 +168,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     return new Promise((resolve) => {
       let sessionId: string | null = resumeSessionId;
+      // The agent announces its model in the init event; helper models that
+      // appear later in modelUsage are background work, not the main turn.
+      let mainModel: string | null = null;
       let resumeFailed = false;
       let settled = false;
       const finish = () => {
@@ -150,7 +208,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         while ((nl = buffer.indexOf("\n")) !== -1) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
-          if (line) this.handleEvent(line, handlers, (id) => (sessionId = id), markResumeFailure);
+          if (line) {
+            this.handleEvent(line, handlers, (id) => (sessionId = id), markResumeFailure, {
+              get: () => mainModel,
+              set: (m) => (mainModel = m),
+            });
+          }
         }
       });
 
@@ -166,7 +229,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       child.on("close", (code) => {
         if (buffer.trim()) {
-          this.handleEvent(buffer.trim(), handlers, (id) => (sessionId = id), markResumeFailure);
+          this.handleEvent(buffer.trim(), handlers, (id) => (sessionId = id), markResumeFailure, {
+            get: () => mainModel,
+            set: (m) => (mainModel = m),
+          });
         }
         // stderr carries the resume failure when it happens before any JSON.
         if (isMissingSession(stderr)) markResumeFailure();
@@ -183,6 +249,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     handlers: AgentTurnInput["handlers"],
     setSession: (id: string) => void,
     onResumeFailure: () => void,
+    model: { get: () => string | null; set: (m: string) => void },
   ): void {
     let evt: any;
     try {
@@ -193,6 +260,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       return;
     }
     if (typeof evt?.session_id === "string") setSession(evt.session_id);
+    if (evt?.type === "system" && typeof evt.model === "string") model.set(evt.model);
 
     switch (evt?.type) {
       case "assistant": {
@@ -200,7 +268,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (block?.type === "text" && typeof block.text === "string") {
             handlers.onDelta(block.text);
           } else if (block?.type === "tool_use" && typeof block.name === "string") {
-            handlers.onTool?.(block.name, describeToolTarget(block.input));
+            handlers.onTool?.(String(block.id ?? ""), block.name, describeToolTarget(block.input));
+          }
+        }
+        break;
+      }
+      case "user": {
+        // Tool results arrive as a synthetic user turn referencing the call.
+        for (const block of evt.message?.content ?? []) {
+          if (block?.type === "tool_result") {
+            handlers.onToolResult?.(
+              String(block.tool_use_id ?? ""),
+              stringifyToolOutput(block.content),
+              Boolean(block.is_error),
+            );
           }
         }
         break;
@@ -211,6 +292,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (evt.is_error && typeof evt.result === "string") {
           handlers.onError(evt.result);
         }
+        handlers.onUsage?.(readUsage(evt, model.get()));
         break;
       }
       default:
