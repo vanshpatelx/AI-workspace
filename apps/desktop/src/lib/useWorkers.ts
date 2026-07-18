@@ -2,9 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalRequest,
   ClientMessage,
+  FileEntry,
   ServerMessage,
   WorkspaceSummary,
 } from "@ai-workspace/protocol";
+
+export interface FileListing {
+  path: string;
+  entries: FileEntry[];
+}
+
+export interface FilePreview {
+  path: string;
+  mime: string;
+  base64: boolean;
+  content: string;
+}
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
 
@@ -53,6 +66,10 @@ export interface WorkersApi {
     close: (url: string, terminalId: string) => void;
     subscribe: (listener: TerminalListener) => () => void;
   };
+  fs: {
+    list: (url: string, path: string) => Promise<FileListing>;
+    read: (url: string, path: string) => Promise<FilePreview>;
+  };
 }
 
 const SESSION_ID = "desktop-main";
@@ -82,6 +99,10 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
   const [workers, setWorkers] = useState<Record<string, WorkerState>>({});
   const socketsRef = useRef<Map<string, WebSocket>>(new Map());
   const termListeners = useRef<Set<TerminalListener>>(new Set());
+  /** In-flight fs requests, keyed by requestId. */
+  const fsPending = useRef<Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>>(
+    new Map(),
+  );
   const key = targets.map((t) => `${t.url}|${t.token}`).join(",");
 
   const patch = useCallback((url: string, fn: (prev: WorkerState) => WorkerState) => {
@@ -198,6 +219,29 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
             case "terminal.exit":
               for (const l of termListeners.current) l(msg.terminalId, "\r\n[process exited]\r\n");
               break;
+            case "fs.listing": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              pending?.resolve({ path: msg.path, entries: msg.entries });
+              break;
+            }
+            case "fs.file": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              pending?.resolve({
+                path: msg.path,
+                mime: msg.mime,
+                base64: msg.base64,
+                content: msg.content,
+              });
+              break;
+            }
+            case "fs.error": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              pending?.reject(new Error(msg.message));
+              break;
+            }
             case "notification":
               patch(target.url, (s) => ({
                 ...s,
@@ -288,7 +332,27 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [emit],
   );
 
-  return { workers, send, runCommand, resolveApproval, terminal };
+  const fs = useMemo(() => {
+    const request = <T,>(url: string, msg: (requestId: string) => ClientMessage): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const requestId = `fs-${++commandCounter}`;
+        fsPending.current.set(requestId, { resolve, reject });
+        emit(url, msg(requestId));
+        // Don't leak a pending entry if the Worker never answers.
+        setTimeout(() => {
+          if (fsPending.current.delete(requestId)) reject(new Error("request timed out"));
+        }, 15000);
+      });
+
+    return {
+      list: (url: string, path: string) =>
+        request<FileListing>(url, (requestId) => ({ type: "fs.list", requestId, path })),
+      read: (url: string, path: string) =>
+        request<FilePreview>(url, (requestId) => ({ type: "fs.read", requestId, path })),
+    };
+  }, [emit]);
+
+  return { workers, send, runCommand, resolveApproval, terminal, fs };
 }
 
 /** Append streamed agent text to the last (in-progress) agent message. */

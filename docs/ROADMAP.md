@@ -27,7 +27,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | 10b | **Agent** actions routed through the Approval Center | ✅ | Claude Code `PreToolUse` hook → Worker loopback endpoint → Approval Center; agent blocks mid-turn until the user decides |
 | 11 | Terminal streaming | ✅ | real PTY (node-pty) streamed to xterm.js; start/input/resize/close + exit; verified with live shell output |
 | 12 | Localhost preview (detect dev servers) | ⬜ | Next.js/Vite/Rails/Django tunneled into Desktop |
-| 13 | File explorer + media preview | ⬜ | browse repo, preview images/video/PDF/markdown |
+| 13 | File explorer + media preview | ✅ | browse the repo, inline preview of text/images/video/audio/PDF via data URIs; path traversal blocked at the Worker (verified over the raw protocol) |
 | 14 | Notifications | ⬜ | task done / test failed / build ok / waiting approval |
 | 15 | Optional stateless relay | ⬜ | forward encrypted frames for remote access without VPN |
 

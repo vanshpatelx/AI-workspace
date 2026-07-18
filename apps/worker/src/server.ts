@@ -9,6 +9,7 @@ import { agentLabel } from "./agents.js";
 import { SessionStore } from "./session.js";
 import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
+import { FileService } from "./files.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import type { AgentAdapter } from "./adapters/types.js";
 
@@ -42,6 +43,8 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   // A connection sees no state and can take no action until it authenticates
   // with the Worker's pairing code.
   const authed = new Set<string>();
+
+  const files = new FileService(process.cwd());
 
   const terminals = new TerminalManager(process.cwd(), {
     onData: (terminalId, data) => server.broadcast({ type: "terminal.output", terminalId, data }),
@@ -281,6 +284,24 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             break;
           case "terminal.close":
             terminals.close(msg.terminalId);
+            break;
+          case "fs.list":
+            files
+              .list(msg.path)
+              .then(({ path, entries }) =>
+                conn.send({ type: "fs.listing", requestId: msg.requestId, path, entries }),
+              )
+              .catch((err: Error) =>
+                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+              );
+            break;
+          case "fs.read":
+            files
+              .read(msg.path)
+              .then((file) => conn.send({ type: "fs.file", requestId: msg.requestId, ...file }))
+              .catch((err: Error) =>
+                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+              );
             break;
           default:
             break;

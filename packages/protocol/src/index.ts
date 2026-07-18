@@ -26,6 +26,13 @@ export interface WorkspaceSummary {
   mem: number | null; // 0..1
 }
 
+/** An entry in a workspace directory listing. */
+export interface FileEntry {
+  name: string;
+  kind: "dir" | "file";
+  size: number;
+}
+
 /** One persisted message in a session transcript. */
 export interface ChatTurn {
   role: "user" | "agent";
@@ -59,7 +66,9 @@ export type ClientMessage =
   | { type: "terminal.start"; terminalId: string; cols: number; rows: number }
   | { type: "terminal.input"; terminalId: string; data: string }
   | { type: "terminal.resize"; terminalId: string; cols: number; rows: number }
-  | { type: "terminal.close"; terminalId: string };
+  | { type: "terminal.close"; terminalId: string }
+  | { type: "fs.list"; requestId: string; path: string }
+  | { type: "fs.read"; requestId: string; path: string };
 
 /** Worker -> Desktop */
 export type ServerMessage =
@@ -72,6 +81,17 @@ export type ServerMessage =
   | { type: "command.result"; commandId: string; code: number | null; output: string; approved: boolean }
   | { type: "terminal.output"; terminalId: string; data: string }
   | { type: "terminal.exit"; terminalId: string; code: number | null }
+  | { type: "fs.listing"; requestId: string; path: string; entries: FileEntry[] }
+  | {
+      type: "fs.file";
+      requestId: string;
+      path: string;
+      mime: string;
+      /** true when `content` is base64 (images, PDFs), false for utf8 text. */
+      base64: boolean;
+      content: string;
+    }
+  | { type: "fs.error"; requestId: string; message: string }
   | { type: "notification"; level: "info" | "warn" | "error"; text: string };
 
 export type WireMessage = ClientMessage | ServerMessage;

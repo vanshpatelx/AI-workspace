@@ -29,6 +29,8 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
     case "terminal.input":
     case "terminal.resize":
     case "terminal.close":
+    case "fs.list":
+    case "fs.read":
       return true;
     default:
       return false;
