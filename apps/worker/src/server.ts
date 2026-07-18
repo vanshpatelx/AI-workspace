@@ -23,6 +23,7 @@ import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
 import { FileService } from "./files.js";
 import { detectPreviewServers } from "./preview.js";
+import { RelayLink } from "./relay-link.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import type { AgentAdapter } from "./adapters/types.js";
 
@@ -468,11 +469,18 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   console.log(`[worker] approval endpoint on http://127.0.0.1:${config.port + 1}/approval`);
 
+  // Optional: also make this Worker reachable through a relay.
+  const relay = config.relayUrl
+    ? new RelayLink(config.relayUrl, config.workerId, server)
+    : null;
+  relay?.start();
+
   return {
     async stop() {
       approvals.rejectAll();
       terminals.closeAll();
       keepAwake.stop();
+      relay?.stop();
       approvalHttp.close();
       await server.close();
     },

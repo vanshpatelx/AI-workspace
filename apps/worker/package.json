@@ -18,9 +18,11 @@
   "dependencies": {
     "@ai-workspace/protocol": "workspace:*",
     "@ai-workspace/transport": "workspace:*",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/ws": "^8.5.12",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

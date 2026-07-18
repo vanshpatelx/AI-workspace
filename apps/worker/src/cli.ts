@@ -36,6 +36,7 @@ function initOptionsFromFlags(flags: Record<string, string | boolean>): InitOpti
   if (typeof flags.port === "string") opts.port = Number(flags.port);
   if (typeof flags.transport === "string") opts.transport = flags.transport as TransportKind;
   if (typeof flags["keep-awake"] === "string") opts.keepAwake = flags["keep-awake"] as KeepAwakePolicy;
+  if (typeof flags.relay === "string") opts.relayUrl = flags.relay;
   return opts;
 }
 

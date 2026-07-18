@@ -19,6 +19,7 @@ export interface InitOptions {
   port?: number;
   transport?: TransportKind;
   keepAwake?: KeepAwakePolicy;
+  relayUrl?: string;
 }
 
 /** Unattended setup: defaults + all detected agents, no prompts. */
@@ -34,6 +35,8 @@ async function runInitNonInteractive(opts: InitOptions): Promise<void> {
     pairingCode: existing?.pairingCode ?? generatePairingCode(),
     createdAt: existing?.createdAt ?? new Date().toISOString(),
   };
+  const relayUrl = opts.relayUrl ?? existing?.relayUrl;
+  if (relayUrl) config.relayUrl = relayUrl;
   saveConfig(config);
   console.log(`Saved ${configPath()}`);
   console.log(`  id=${config.workerId} transport=${config.transport} keepAwake=${config.keepAwake}`);

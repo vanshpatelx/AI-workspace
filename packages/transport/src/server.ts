@@ -39,6 +39,17 @@ export class TransportServer {
     this.wss.on("error", (err) => this.handlers.onError?.(err as Error));
   }
 
+  /**
+   * Treat an already-open socket as an inbound connection.
+   *
+   * Used for relay mode: the Worker dials out to a relay, and the resulting
+   * socket is handed here so every message handler, auth check and broadcast
+   * behaves exactly as it does for a direct connection.
+   */
+  attach(socket: WebSocket): void {
+    this.accept(socket);
+  }
+
   private accept(socket: WebSocket): void {
     const id = `c${++this.seq}`;
     const conn: TransportConnection = {

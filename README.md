@@ -78,6 +78,16 @@ Worker address for the UI.
 > Workspace packages resolve from `dist/`, so run `pnpm build:packages`
 > after changing `packages/*`.
 
+## Remote access
+
+Direct transports (Tailscale, WireGuard, LAN, SSH tunnel) need no extra
+infrastructure and are genuinely end-to-end — prefer them.
+
+If you cannot connect directly, an optional [relay](docs/RELAY.md) forwards
+frames between a Desktop and a Worker and stores nothing. Note that it can
+currently *read* traffic in transit, so run your own — the trust model is
+documented in full in [docs/RELAY.md](docs/RELAY.md).
+
 ## License
 
 See [LICENSE](LICENSE). Non-commercial use only; commercial use requires prior written permission.

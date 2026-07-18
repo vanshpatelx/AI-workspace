@@ -14,6 +14,8 @@ export interface WorkerConfig {
   agents: AgentKind[];
   pairingCode: string;
   createdAt: string;
+  /** Optional relay to dial out to, e.g. ws://relay.example.com:8787 */
+  relayUrl?: string;
 }
 
 /**
