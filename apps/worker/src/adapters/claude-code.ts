@@ -13,6 +13,31 @@ function isMissingSession(text: string): boolean {
 }
 
 /**
+ * The one detail worth showing for a tool call: the file it touched, the
+ * command it ran, the thing it searched for. Falls back to nothing rather
+ * than dumping raw JSON at the user.
+ */
+function describeToolTarget(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const i = input as Record<string, unknown>;
+  const pick = (key: string) => (typeof i[key] === "string" ? (i[key] as string) : "");
+
+  const target =
+    pick("file_path") ||
+    pick("path") ||
+    pick("command") ||
+    pick("pattern") ||
+    pick("query") ||
+    pick("url") ||
+    pick("prompt") ||
+    pick("description");
+
+  // Single line, and short enough to sit on one row in the UI.
+  const oneLine = target.replace(/\s+/g, " ").trim();
+  return oneLine.length > 160 ? `${oneLine.slice(0, 157)}…` : oneLine;
+}
+
+/**
  * Inline settings that route every Bash tool call through our PreToolUse hook,
  * so the agent's own dangerous actions land in the Approval Center.
  *
@@ -175,7 +200,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           if (block?.type === "text" && typeof block.text === "string") {
             handlers.onDelta(block.text);
           } else if (block?.type === "tool_use" && typeof block.name === "string") {
-            handlers.onNotice?.(`↳ ${block.name}`);
+            handlers.onTool?.(block.name, describeToolTarget(block.input));
           }
         }
         break;

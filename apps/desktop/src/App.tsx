@@ -14,10 +14,12 @@ import {
   Globe,
   FolderOpen,
   GitBranch,
+  Sparkles,
 } from "lucide-react";
 import type { ApprovalRequest, Workspace } from "@ai-workspace/protocol";
 import {
   useWorkers,
+  type ChatMessage,
   type CommandLine,
   type ConnectionState,
   type WorkerState,
@@ -31,6 +33,8 @@ import { TerminalPanel } from "./components/TerminalPanel.js";
 import { FilesPanel } from "./components/FilesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
+import { Markdown } from "./components/Markdown.js";
+import { ToolCall } from "./components/ToolCall.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -312,14 +316,16 @@ export function App() {
                 </Button>
               </div>
 
-              <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+              <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
                 {messages.length === 0 ? (
                   <p className="mt-8 text-center text-sm text-muted-foreground">
                     Chatting in <span className="font-medium">{active.workspace.name}</span> — the
                     agent runs in that directory.
                   </p>
                 ) : (
-                  messages.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)
+                  messages.map((m, i) => (
+                    <Turn key={i} message={m} streaming={i === messages.length - 1} />
+                  ))
                 )}
               </div>
 
@@ -472,18 +478,44 @@ function ConnBadge({ connection, status }: { connection: ConnectionState; status
   return <Badge variant="success">online</Badge>;
 }
 
-function Bubble({ role, text }: { role: "user" | "agent"; text: string }) {
-  const isUser = role === "user";
+/**
+ * One entry in the transcript.
+ *
+ * Agent replies are full-width and markdown-rendered rather than squeezed into
+ * a bubble — they routinely contain tables and code, which a narrow bubble
+ * mangles. The user's own messages stay compact and visually distinct.
+ */
+function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean }) {
+  if (message.role === "tool") {
+    return <ToolCall tool={message.tool ?? "Tool"} target={message.target} />;
+  }
+
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground">
+          {message.text}
+        </div>
+      </div>
+    );
+  }
+
+  if (!message.text) {
+    return streaming ? (
+      <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+        thinking…
+      </div>
+    ) : null;
+  }
+
   return (
-    <div className={isUser ? "flex justify-end" : "flex justify-start"}>
-      <div
-        className={
-          isUser
-            ? "max-w-[80%] rounded-lg rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
-            : "max-w-[80%] whitespace-pre-wrap rounded-lg rounded-bl-sm bg-secondary px-3 py-2 text-sm text-secondary-foreground"
-        }
-      >
-        {text || <span className="opacity-50">…</span>}
+    <div className="flex gap-2.5">
+      <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-secondary">
+        <Sparkles className="h-3 w-3 text-emerald-400" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <Markdown text={message.text} />
       </div>
     </div>
   );

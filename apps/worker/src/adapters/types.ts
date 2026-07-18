@@ -3,7 +3,10 @@ import type { AgentKind } from "@ai-workspace/protocol";
 export interface AgentTurnHandlers {
   /** Streamed assistant output for this turn. */
   onDelta(text: string): void;
-  /** Non-fatal notice (e.g. a tool the agent ran). */
+  /** The agent used a tool — reported separately so the UI can show the
+   *  action rather than burying it in the reply text. */
+  onTool?(tool: string, target: string): void;
+  /** Non-fatal status the user should see (e.g. a session had to restart). */
   onNotice?(text: string): void;
   /** Fatal error for this turn. */
   onError(message: string): void;

@@ -33,8 +33,11 @@ export interface PreviewListing {
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
 
 export interface ChatMessage {
-  role: "user" | "agent";
+  role: "user" | "agent" | "tool";
   text: string;
+  /** Present on `tool` messages: what the agent did and to what. */
+  tool?: string;
+  target?: string;
 }
 
 export interface CommandLine {
@@ -211,7 +214,25 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                 ...s,
                 messages: {
                   ...s.messages,
-                  [msg.sessionId]: msg.messages.map((m) => ({ role: m.role, text: m.text })),
+                  [msg.sessionId]: msg.messages.map((m) => ({
+                    role: m.role,
+                    text: m.text,
+                    ...(m.tool ? { tool: m.tool } : {}),
+                    ...(m.target ? { target: m.target } : {}),
+                  })),
+                },
+              }));
+              break;
+            case "chat.tool":
+              patch(target.url, (s) => ({
+                ...s,
+                messages: {
+                  ...s.messages,
+                  [msg.sessionId]: appendTool(
+                    s.messages[msg.sessionId] ?? [],
+                    msg.tool,
+                    msg.target,
+                  ),
                 },
               }));
               break;
@@ -497,6 +518,21 @@ function raiseOsNotification(n: WorkerNotification): void {
   } catch {
     // Notification constructor can throw in some embedded contexts.
   }
+}
+
+/**
+ * Insert a tool action into the transcript.
+ *
+ * A turn interleaves prose and actions, so the current text block is closed
+ * off, the action recorded, and a fresh block opened for whatever the agent
+ * says next.
+ */
+function appendTool(prev: ChatMessage[], tool: string, target: string): ChatMessage[] {
+  const action: ChatMessage = { role: "tool", text: "", tool, target };
+  const last = prev[prev.length - 1];
+  // Drop an untouched placeholder rather than leaving an empty bubble behind.
+  const head = last && last.role === "agent" && last.text === "" ? prev.slice(0, -1) : prev;
+  return [...head, action, { role: "agent", text: "" }];
 }
 
 /** Append streamed agent text to the last (in-progress) agent message. */

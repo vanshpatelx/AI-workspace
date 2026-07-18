@@ -85,11 +85,20 @@ export interface FileEntry {
   size: number;
 }
 
-/** One persisted message in a session transcript. */
+/**
+ * One entry in a session transcript.
+ *
+ * `tool` turns record what the agent did (read a file, ran a command) so the
+ * Desktop can render them as actions rather than as prose in the reply.
+ */
 export interface ChatTurn {
-  role: "user" | "agent";
+  role: "user" | "agent" | "tool";
   text: string;
   at: number;
+  /** Tool name, e.g. "Bash" or "Edit". Only on `tool` turns. */
+  tool?: string;
+  /** What it acted on — a file path, a command, a query. */
+  target?: string;
 }
 
 export type ApprovalKind =
@@ -144,6 +153,7 @@ export type ServerMessage =
   | { type: "session.created"; requestId: string; workspaceId: string; sessionId: string }
   | { type: "chat.history"; sessionId: string; messages: ChatTurn[] }
   | { type: "chat.delta"; sessionId: string; text: string }
+  | { type: "chat.tool"; sessionId: string; tool: string; target: string }
   | { type: "approval.request"; request: ApprovalRequest }
   | { type: "approval.resolved"; requestId: string; approved: boolean }
   | { type: "command.result"; commandId: string; code: number | null; output: string; approved: boolean }

@@ -189,7 +189,19 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             reply += delta;
             conn.send({ type: "chat.delta", sessionId, text: delta });
           },
-          onNotice: (notice) => conn.send({ type: "chat.delta", sessionId, text: `\n${notice}\n` }),
+          onTool: (tool, target) => {
+            // Recorded as its own turn so the transcript shows what the agent
+            // did, not just what it said.
+            sessions.appendTurn(sessionId, {
+              role: "tool",
+              text: "",
+              tool,
+              target,
+              at: Date.now(),
+            });
+            conn.send({ type: "chat.tool", sessionId, tool, target });
+          },
+          onNotice: (notice) => conn.send({ type: "chat.delta", sessionId, text: `\n_${notice}_\n` }),
           onError: (message) => notify("agent-error", "error", "Agent error", message),
         },
       });

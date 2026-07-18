@@ -55,3 +55,52 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* Syntax highlighting for fenced code in agent replies. Hand-tuned rather
+   than importing a highlight.js theme, so it matches the app's palette. */
+.aiw-md .hljs-comment,
+.aiw-md .hljs-quote {
+  color: #6b7280;
+  font-style: italic;
+}
+.aiw-md .hljs-keyword,
+.aiw-md .hljs-selector-tag,
+.aiw-md .hljs-literal,
+.aiw-md .hljs-type {
+  color: #c084fc;
+}
+.aiw-md .hljs-string,
+.aiw-md .hljs-regexp,
+.aiw-md .hljs-addition {
+  color: #86efac;
+}
+.aiw-md .hljs-number,
+.aiw-md .hljs-symbol,
+.aiw-md .hljs-bullet {
+  color: #fdba74;
+}
+.aiw-md .hljs-title,
+.aiw-md .hljs-section,
+.aiw-md .hljs-name {
+  color: #7dd3fc;
+}
+.aiw-md .hljs-attr,
+.aiw-md .hljs-attribute,
+.aiw-md .hljs-variable,
+.aiw-md .hljs-template-variable {
+  color: #fde68a;
+}
+.aiw-md .hljs-built_in,
+.aiw-md .hljs-class .hljs-title {
+  color: #67e8f9;
+}
+.aiw-md .hljs-meta,
+.aiw-md .hljs-deletion {
+  color: #fca5a5;
+}
+.aiw-md .hljs-emphasis {
+  font-style: italic;
+}
+.aiw-md .hljs-strong {
+  font-weight: 600;
+}
