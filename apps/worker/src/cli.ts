@@ -11,6 +11,7 @@ import { runInit, type InitOptions } from "./init.js";
 import { startWorker } from "./server.js";
 import { serveUi, uiDir, uiDirExists } from "./ui.js";
 import { installService, serviceStatus, uninstallService } from "./service.js";
+import { log } from "./log.js";
 
 /** Parse `--flag value` and boolean `--flag` pairs from args. */
 function parseFlags(args: string[]): Record<string, string | boolean> {
@@ -82,16 +83,16 @@ async function cmdStart(): Promise<void> {
   const shutdown = () => {
     // A second Ctrl+C means "I'm done waiting" — exit immediately.
     if (shuttingDown) {
-      console.log("[worker] force quit");
+      log.warn("force quit");
       process.exit(1);
     }
     shuttingDown = true;
-    console.log("\n[worker] shutting down");
+    log.shutdown();
 
     // Never hang: if graceful cleanup stalls (a stuck PTY, a socket that
     // won't drain), exit anyway rather than leaving the user pressing Ctrl+C.
     const force = setTimeout(() => {
-      console.log("[worker] cleanup timed out, exiting");
+      log.warn("cleanup timed out, exiting");
       process.exit(1);
     }, 3000);
     force.unref();

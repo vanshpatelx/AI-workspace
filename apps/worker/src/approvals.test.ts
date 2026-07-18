@@ -40,6 +40,27 @@ describe("classifyCommand", () => {
     expect(classifyCommand("git status && git push")).not.toBeNull();
   });
 
+  // Regression: a dangerous word inside an argument is not a dangerous
+  // command. Searching a CI file for "docker push" was being gated, so the
+  // user had to approve a grep.
+  it.each([
+    ['grep -n "docker build\\|docker push" .github/workflows/ci.yaml'],
+    ["grep 'docker run' Makefile"],
+    ['echo "docker is not running here"'],
+    ['rg "docker-compose up" --files-with-matches'],
+  ])("does not gate %s — the word is only an argument", (command) => {
+    expect(classifyCommand(command)).toBeNull();
+  });
+
+  it.each([
+    ["docker ps"],
+    ["sudo docker run -it ubuntu"],
+    ["ls && docker compose up"],
+    ["cd app; docker build ."],
+  ])("still gates %s — docker is the command", (command) => {
+    expect(classifyCommand(command)?.kind).toBe("docker-command");
+  });
+
   it("carries a human-readable summary for the UI", () => {
     expect(classifyCommand("rm -rf dist")?.summary).toMatch(/delete/i);
   });

@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import type { TransportServer } from "@ai-workspace/transport";
+import { log } from "./log.js";
 
 /**
  * Outbound link to a relay.
@@ -40,8 +41,7 @@ export class RelayLink {
 
     socket.on("open", () => {
       this.attempt = 0;
-      console.log(`[worker] relay connected: ${url}`);
-      console.log(`[worker] reachable at: ${this.clientUrl()}`);
+      log.relay(`connected · reachable at ${this.clientUrl()}`);
       // Hand the socket to the transport so it behaves like any other client.
       this.server.attach(socket);
     });
@@ -51,12 +51,12 @@ export class RelayLink {
       const detail = reason.toString() || String(code);
       // Back off so a relay that is down doesn't get hammered.
       const delay = Math.min(30_000, 1000 * 2 ** Math.min(this.attempt++, 5));
-      console.log(`[worker] relay disconnected (${detail}); retrying in ${delay / 1000}s`);
+      log.relay(`disconnected (${detail}) · retrying in ${delay / 1000}s`);
       this.timer = setTimeout(() => this.connect(), delay);
     });
 
     socket.on("error", (err) => {
-      console.error(`[worker] relay error: ${err.message}`);
+      log.error(`relay: ${err.message}`);
     });
   }
 

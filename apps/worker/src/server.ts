@@ -25,6 +25,7 @@ import { TerminalManager } from "./terminals.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers } from "./preview.js";
 import { RelayLink } from "./relay-link.js";
+import { log } from "./log.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import type { AgentAdapter } from "./adapters/types.js";
 
@@ -285,7 +286,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
       // Broadcast so any connected Desktop can approve.
       server.broadcast({ type: "approval.request", request });
       notify("approval-waiting", "warn", `Approval needed: ${sensitive.summary}`, command);
-      console.log(`[worker] approval required (${sensitive.kind}): ${command}`);
+      log.approval(sensitive.kind, command, false);
 
       const approved = await decision;
       server.broadcast({ type: "approval.resolved", requestId: request.id, approved });
@@ -402,7 +403,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
       if (!tokenMatches(req.headers["x-aiw-token"] as string | undefined, hookToken)) {
         // Loud on purpose: a denied hook looks identical to a user rejection
         // from the agent's side, so a misconfigured token must be visible here.
-        console.error("[worker] rejected unauthenticated approval request");
+        log.error("rejected unauthenticated approval request");
         res.writeHead(401, { "content-type": "application/json" });
         res.end(JSON.stringify({ approved: false, reason: "unauthorized" }));
         return;
@@ -426,7 +427,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             command || toolName,
             Date.now(),
           );
-          console.log(`[worker] agent approval required (${sensitive.kind}): ${command}`);
+          log.approval(sensitive.kind, command, true);
           server.broadcast({ type: "approval.request", request });
           notify("approval-waiting", "warn", `Agent needs approval: ${sensitive.summary}`, command);
 
@@ -448,7 +449,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     { port: config.port },
     {
       onConnect(conn) {
-        console.log(`[worker] client ${conn.id} connected (awaiting auth)`);
+        log.client("connected", `${conn.id} awaiting auth`);
         // No state is sent until the client authenticates.
       },
       onMessage(conn, msg) {
@@ -462,13 +463,13 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         switch (msg.type) {
           case "hello": {
             if (msg.token !== config.pairingCode) {
-              console.log(`[worker] auth REJECTED for ${msg.clientId}`);
+              log.error(`auth rejected for ${msg.clientId}`);
               conn.send({ type: "auth.result", ok: false, reason: "invalid pairing code" });
               conn.close();
               return;
             }
             authed.add(conn.id);
-            console.log(`[worker] auth OK for ${msg.clientId}`);
+            log.client("authed", msg.clientId);
             conn.send({ type: "auth.result", ok: true });
             void broadcastState();
             // Rehydrate persisted conversations so the Desktop reconnects with
@@ -488,7 +489,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             const requestId = msg.requestId;
             try {
               const opened = workspaces.open(msg.path);
-              console.log(`[worker] workspace opened: ${opened.path}`);
+              log.workspace("opened", opened.path);
               void workspaces
                 .list(activeByWorkspace)
                 .then(async (all) => {
@@ -508,7 +509,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
           }
           case "workspace.close":
             workspaces.close(msg.workspaceId);
-            console.log(`[worker] workspace closed: ${msg.workspaceId}`);
+            log.workspace("closed", msg.workspaceId);
             void broadcastState();
             break;
           case "session.create": {
@@ -525,16 +526,16 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             break;
           }
           case "chat.send":
-            console.log(`[worker] chat(${msg.workspaceId}/${msg.sessionId}): ${msg.text.slice(0, 50)}`);
+            log.chat(`${msg.workspaceId}/${msg.sessionId}`, msg.text);
             void handleChat(conn, msg.workspaceId, msg.sessionId, msg.text);
             break;
           case "command.run":
-            console.log(`[worker] command(${msg.workspaceId}): ${msg.command.slice(0, 60)}`);
+            log.command(msg.workspaceId, msg.command);
             void handleCommand(conn, msg.workspaceId, msg.commandId, msg.command);
             break;
           case "approval.resolve":
             if (!approvals.resolve(msg.requestId, msg.approved)) {
-              console.log(`[worker] approval ${msg.requestId} already resolved/unknown`);
+              log.info(`approval ${msg.requestId} already resolved`);
             }
             break;
           case "terminal.start": {
@@ -545,13 +546,16 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               conn.send({ type: "terminal.exit", terminalId: msg.terminalId, code: null });
               break;
             }
+            // The UI re-sends start on remount, so only report a real spawn —
+            // otherwise the log fills with "started" for one terminal.
+            const existed = terminals.has(msg.terminalId);
             const err = terminals.start(msg.terminalId, cwd, msg.cols, msg.rows);
             if (err) {
-              console.error(`[worker] ${err}`);
+              log.error(err);
               notify("agent-error", "error", "Terminal failed to start", err);
               conn.send({ type: "terminal.exit", terminalId: msg.terminalId, code: null });
-            } else {
-              console.log(`[worker] terminal ${msg.terminalId} started`);
+            } else if (!existed) {
+              log.terminal("started", msg.terminalId);
             }
             break;
           }
@@ -605,7 +609,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
           case "preview.scan":
             detectPreviewServers(config.port)
               .then((servers) => {
-                console.log(`[worker] preview scan found ${servers.length} server(s)`);
+                log.preview(servers.length);
                 conn.send({
                   type: "preview.list",
                   requestId: msg.requestId,
@@ -626,23 +630,25 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         // The close code says a lot: 1000/1001 is a normal navigate-away or
         // reload, 1006 means the connection dropped without a close frame.
         const detail = code === 1001 ? "page navigated/reloaded" : describeCloseCode(code);
-        console.log(
-          `[worker] client ${conn.id} disconnected (code=${code ?? "?"} ${detail}${reason ? `: ${reason}` : ""})`,
-        );
+        log.client("gone", `${conn.id} · ${detail}${reason ? ` · ${reason}` : ""}`);
       },
       onError(err) {
-        console.error("[worker] transport error:", err.message);
+        log.error(`transport: ${err.message}`);
       },
     },
   );
 
   const agents = config.agents.map(agentLabel).join(", ") || "none detected";
-  console.log(`ai-workspace worker (protocol v${PROTOCOL_VERSION})`);
-  console.log(`[worker] id=${config.workerId} agents=[${agents}] keepAwake=${config.keepAwake}`);
-  console.log(`[worker] listening on ws://127.0.0.1:${config.port}`);
-  console.log(`[worker] pairing code: ${config.pairingCode}`);
+  log.banner({
+    version: PROTOCOL_VERSION,
+    workerId: config.workerId,
+    agents,
+    keepAwake: config.keepAwake,
+    url: `ws://127.0.0.1:${config.port}`,
+    approvalUrl: `http://127.0.0.1:${config.port + 1}/approval`,
+    pairingCode: config.pairingCode,
+  });
 
-  console.log(`[worker] approval endpoint on http://127.0.0.1:${config.port + 1}/approval`);
 
   // Optional: also make this Worker reachable through a relay.
   const relay = config.relayUrl

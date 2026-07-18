@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { KeepAwakePolicy } from "./config.js";
+import { log } from "./log.js";
 
 /**
  * Keeps the machine awake while agents are working, using the OS's native
@@ -50,21 +51,21 @@ export class KeepAwake {
     if (this.proc) return; // already held
     const [cmd, args] = commandForPlatform();
     if (!cmd) {
-      console.warn(`[keepawake] no power-assertion tool for platform ${process.platform}; skipping`);
+      log.warn(`no power-assertion tool for ${process.platform}; machine may sleep`);
       return;
     }
     this.proc = spawn(cmd, args, { stdio: "ignore" });
     this.proc.on("exit", () => {
       this.proc = null;
     });
-    console.log(`[keepawake] holding (${this.policy}) via ${cmd}`);
+    log.keepawake(true, this.policy);
   }
 
   private release(): void {
     if (!this.proc) return;
     this.proc.kill("SIGTERM");
     this.proc = null;
-    console.log("[keepawake] released");
+    log.keepawake(false, this.policy);
   }
 }
 

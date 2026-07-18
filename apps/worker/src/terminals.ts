@@ -25,6 +25,11 @@ export class TerminalManager {
 
   constructor(private handlers: TerminalHandlers) {}
 
+  /** Is this terminal already running? */
+  has(terminalId: string): boolean {
+    return this.ptys.has(terminalId);
+  }
+
   /**
    * Start a PTY in a workspace's directory. Returns an error message if the
    * shell could not be spawned.
