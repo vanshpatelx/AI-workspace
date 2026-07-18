@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { join, resolve, basename } from "node:path";
+import { join, resolve, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import type { Workspace } from "@ai-workspace/protocol";
@@ -52,14 +52,15 @@ export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, StoredWorkspace>();
   private readonly files = new Map<string, FileService>();
 
-  constructor() {
+  /** Store path is injectable so the registry can be pointed elsewhere. */
+  constructor(private storePath: string = STORE_PATH) {
     this.load();
   }
 
   private load(): void {
-    if (!existsSync(STORE_PATH)) return;
+    if (!existsSync(this.storePath)) return;
     try {
-      const raw = JSON.parse(readFileSync(STORE_PATH, "utf8")) as StoredWorkspace[];
+      const raw = JSON.parse(readFileSync(this.storePath, "utf8")) as StoredWorkspace[];
       for (const w of raw) {
         // Drop entries whose directory has since been moved or deleted.
         if (existsSync(w.path)) this.workspaces.set(w.workspaceId, w);
@@ -71,8 +72,8 @@ export class WorkspaceRegistry {
 
   private persist(): void {
     try {
-      mkdirSync(CONFIG_DIR, { recursive: true });
-      writeFileSync(STORE_PATH, JSON.stringify([...this.workspaces.values()], null, 2), "utf8");
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      writeFileSync(this.storePath, JSON.stringify([...this.workspaces.values()], null, 2), "utf8");
     } catch (err) {
       console.error("[worker] failed to persist workspaces:", (err as Error).message);
     }
