@@ -38,6 +38,14 @@ aiw ui               # serve the Desktop UI at http://127.0.0.1:5180
 
 Pair the UI with the code from `aiw worker status`. Requires Node 20+ and git.
 
+To keep the Worker running across logins and reboots (macOS):
+
+```bash
+aiw service install     # starts at login, restarts if it exits
+aiw service status
+aiw service uninstall
+```
+
 ### Desktop app
 
 Download the `.dmg` from [Releases](https://github.com/vanshpatelx/AI-workspace/releases)

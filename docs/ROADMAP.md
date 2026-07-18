@@ -36,6 +36,6 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
 | D1 | Worker install: `curl \| sh` → `aiw` binary | ✅ | install.sh clones, builds, links `aiw`; `aiw ui` serves the built Desktop UI; verified running the full stack from `dist` |
-| D2 | Worker auto-start as launchd service | ⬜ | survive reboots |
+| D2 | Worker auto-start as launchd service | ✅ | `aiw service install/uninstall/status` writes a LaunchAgent with RunAtLoad + KeepAlive; verified the Worker starts, serves, and is restarted by launchd after being killed |
 | D3 | Desktop `.dmg` download (Electron build) | ✅ | Electron shell (contextIsolation, no nodeIntegration) + electron-builder DMG; verified by mounting a locally built DMG |
 | D4 | CI + release automation | ✅ | GitHub Actions: typecheck/build on every push plus a clean-machine `install.sh` smoke test; tagged releases build the DMG (arm64+x64) and a CLI tarball with checksums |

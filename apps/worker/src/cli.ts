@@ -10,6 +10,7 @@ import { agentLabel } from "./agents.js";
 import { runInit, type InitOptions } from "./init.js";
 import { startWorker } from "./server.js";
 import { serveUi, uiDir, uiDirExists } from "./ui.js";
+import { installService, serviceStatus, uninstallService } from "./service.js";
 
 /** Parse `--flag value` and boolean `--flag` pairs from args. */
 function parseFlags(args: string[]): Record<string, string | boolean> {
@@ -58,6 +59,11 @@ Usage:
   aiw worker start     Start the Worker (transport server + keep-awake)
   aiw worker status    Show this Worker's configuration
   aiw ui [--port n]    Serve the Desktop UI (default http://127.0.0.1:5180)
+
+  aiw service install    Run the Worker at login and restart it if it exits
+  aiw service uninstall  Remove the background service
+  aiw service status     Show whether the service is installed and running
+
   aiw help             Show this help
 
 Docs: https://github.com/vanshpatelx/AI-workspace`;
@@ -118,6 +124,47 @@ async function main(): Promise<void> {
     const uiFlags = parseFlags(argv.slice(1));
     serveUi(typeof uiFlags.port === "string" ? Number(uiFlags.port) : 5180);
     return;
+  }
+
+  if (group === "service") {
+    try {
+      switch (sub) {
+        case "install": {
+          if (!configExists()) {
+            console.error("No Worker config found. Run `aiw worker init` first.");
+            process.exitCode = 1;
+            return;
+          }
+          const path = await installService(process.cwd());
+          console.log("Worker service installed and started.");
+          console.log(`  plist:  ${path}`);
+          console.log("  It now starts at login and restarts if it exits.");
+          console.log("  Check it with:  aiw service status");
+          return;
+        }
+        case "uninstall":
+          await uninstallService();
+          console.log("Worker service stopped and removed.");
+          return;
+        case "status": {
+          const status = await serviceStatus();
+          console.log(`Service: ${status.installed ? "installed" : "not installed"}`);
+          console.log(`  running: ${status.running ? `yes (pid ${status.pid})` : "no"}`);
+          console.log(`  plist:   ${status.plist}`);
+          console.log(`  logs:    ${status.logs}`);
+          return;
+        }
+        default:
+          console.error(`Unknown service command: ${sub ?? "(none)"}\n`);
+          console.log(HELP);
+          process.exitCode = 1;
+          return;
+      }
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exitCode = 1;
+      return;
+    }
   }
 
   if (group === "worker") {
