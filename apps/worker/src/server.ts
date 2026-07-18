@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { exec } from "node:child_process";
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
 import { PROTOCOL_VERSION, type AgentKind, type WorkspaceSummary } from "@ai-workspace/protocol";
 import { TransportServer, type TransportConnection } from "@ai-workspace/transport";
 import type { WorkerConfig } from "./config.js";
@@ -10,6 +10,7 @@ import { SessionStore } from "./session.js";
 import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
 import { FileService } from "./files.js";
+import { detectPreviewServers } from "./preview.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import type { AgentAdapter } from "./adapters/types.js";
 
@@ -172,6 +173,32 @@ export function startWorker(config: WorkerConfig): RunningWorker {
    */
   function startApprovalEndpoint(): HttpServer {
     const http = createServer((req, res) => {
+      // /preview/<port>/<rest> -> proxy to a local dev server. Framing the dev
+      // server directly would only work when the Worker is the same machine as
+      // the browser; proxying keeps previews working over Tailscale/relay.
+      const preview = (req.url ?? "").match(/^\/preview\/(\d+)(\/.*)?$/);
+      if (preview) {
+        const port = Number(preview[1]);
+        const path = preview[2] || "/";
+        const upstream = httpRequest(
+          { host: "127.0.0.1", port, path, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
+          (up) => {
+            const headers = { ...up.headers };
+            // Strip framing guards so the preview can render inside the app.
+            delete headers["x-frame-options"];
+            delete headers["content-security-policy"];
+            res.writeHead(up.statusCode ?? 502, headers);
+            up.pipe(res);
+          },
+        );
+        upstream.on("error", (err) => {
+          res.writeHead(502, { "content-type": "text/plain" });
+          res.end(`preview upstream error: ${err.message}`);
+        });
+        req.pipe(upstream);
+        return;
+      }
+
       if (req.method !== "POST" || req.url !== "/approval") {
         res.writeHead(404).end();
         return;
@@ -299,6 +326,21 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             files
               .read(msg.path)
               .then((file) => conn.send({ type: "fs.file", requestId: msg.requestId, ...file }))
+              .catch((err: Error) =>
+                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+              );
+            break;
+          case "preview.scan":
+            detectPreviewServers(config.port)
+              .then((servers) => {
+                console.log(`[worker] preview scan found ${servers.length} server(s)`);
+                conn.send({
+                  type: "preview.list",
+                  requestId: msg.requestId,
+                  servers,
+                  proxyBase: `:${config.port + 1}/preview`,
+                });
+              })
               .catch((err: Error) =>
                 conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
               );

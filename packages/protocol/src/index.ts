@@ -26,6 +26,17 @@ export interface WorkspaceSummary {
   mem: number | null; // 0..1
 }
 
+/** A local dev server detected on the Worker's machine. */
+export interface PreviewServer {
+  port: number;
+  /** Process name that owns the listening socket, e.g. "node". */
+  process: string;
+  /** <title> of the served page, when it has one. */
+  title?: string;
+  /** Best-effort framework guess, e.g. "Vite". */
+  framework?: string;
+}
+
 /** An entry in a workspace directory listing. */
 export interface FileEntry {
   name: string;
@@ -68,7 +79,8 @@ export type ClientMessage =
   | { type: "terminal.resize"; terminalId: string; cols: number; rows: number }
   | { type: "terminal.close"; terminalId: string }
   | { type: "fs.list"; requestId: string; path: string }
-  | { type: "fs.read"; requestId: string; path: string };
+  | { type: "fs.read"; requestId: string; path: string }
+  | { type: "preview.scan"; requestId: string };
 
 /** Worker -> Desktop */
 export type ServerMessage =
@@ -92,6 +104,17 @@ export type ServerMessage =
       content: string;
     }
   | { type: "fs.error"; requestId: string; message: string }
+  | {
+      type: "preview.list";
+      requestId: string;
+      servers: PreviewServer[];
+      /**
+       * Host-relative base the Desktop frames previews through, e.g.
+       * ":4502/preview". The client prepends the same host it reached the
+       * Worker on, giving "http://<host>:4502/preview/<port>/".
+       */
+      proxyBase: string;
+    }
   | { type: "notification"; level: "info" | "warn" | "error"; text: string };
 
 export type WireMessage = ClientMessage | ServerMessage;

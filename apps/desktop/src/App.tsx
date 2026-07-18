@@ -15,6 +15,7 @@ import {
   Plus,
   Trash2,
   FolderTree,
+  Globe,
 } from "lucide-react";
 import type { ApprovalRequest, WorkspaceSummary } from "@ai-workspace/protocol";
 import {
@@ -30,6 +31,7 @@ import { Button } from "./components/ui/button.js";
 import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { FilesPanel } from "./components/FilesPanel.js";
+import { PreviewPanel } from "./components/PreviewPanel.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -48,10 +50,10 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<"chat" | "terminal" | "files">("chat");
+  const [tab, setTab] = useState<"chat" | "terminal" | "files" | "preview">("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { workers, send, runCommand, resolveApproval, terminal, fs } = useWorkers(targets);
+  const { workers, send, runCommand, resolveApproval, terminal, fs, preview } = useWorkers(targets);
 
   const active: WorkerState | null = useMemo(() => {
     const url = selected && workers[selected] ? selected : targets[0]?.url;
@@ -154,6 +156,13 @@ export function App() {
             >
               <FolderTree className="h-3.5 w-3.5" /> Files
             </Button>
+            <Button
+              size="sm"
+              variant={tab === "preview" ? "secondary" : "ghost"}
+              onClick={() => setTab("preview")}
+            >
+              <Globe className="h-3.5 w-3.5" /> Preview
+            </Button>
             {active && (
               <span className="ml-auto text-xs text-muted-foreground">
                 {active.workspaces[0]?.hostname ?? active.url}
@@ -169,6 +178,17 @@ export function App() {
                   url={active.url}
                   terminalId="main"
                   terminal={terminal}
+                  connected={active.connection === "connected"}
+                />
+              )}
+            </div>
+          ) : tab === "preview" ? (
+            <div className="min-h-0 flex-1">
+              {active && (
+                <PreviewPanel
+                  key={active.url}
+                  url={active.url}
+                  preview={preview}
                   connected={active.connection === "connected"}
                 />
               )}

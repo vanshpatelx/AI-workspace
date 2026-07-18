@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   ClientMessage,
   FileEntry,
+  PreviewServer,
   ServerMessage,
   WorkspaceSummary,
 } from "@ai-workspace/protocol";
@@ -17,6 +18,12 @@ export interface FilePreview {
   mime: string;
   base64: boolean;
   content: string;
+}
+
+export interface PreviewListing {
+  servers: PreviewServer[];
+  /** Absolute proxy base, already resolved against the Worker's host. */
+  proxyBase: string;
 }
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
@@ -69,6 +76,9 @@ export interface WorkersApi {
   fs: {
     list: (url: string, path: string) => Promise<FileListing>;
     read: (url: string, path: string) => Promise<FilePreview>;
+  };
+  preview: {
+    scan: (url: string) => Promise<PreviewListing>;
   };
 }
 
@@ -236,6 +246,18 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               });
               break;
             }
+            case "preview.list": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              // proxyBase is host-relative (":4502/preview") — resolve it
+              // against the host we reached this Worker on.
+              const host = new URL(target.url).hostname;
+              pending?.resolve({
+                servers: msg.servers,
+                proxyBase: `http://${host}${msg.proxyBase}`,
+              });
+              break;
+            }
             case "fs.error": {
               const pending = fsPending.current.get(msg.requestId);
               fsPending.current.delete(msg.requestId);
@@ -352,7 +374,22 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     };
   }, [emit]);
 
-  return { workers, send, runCommand, resolveApproval, terminal, fs };
+  const preview = useMemo(
+    () => ({
+      scan: (url: string) =>
+        new Promise<PreviewListing>((resolve, reject) => {
+          const requestId = `pv-${++commandCounter}`;
+          fsPending.current.set(requestId, { resolve, reject });
+          emit(url, { type: "preview.scan", requestId });
+          setTimeout(() => {
+            if (fsPending.current.delete(requestId)) reject(new Error("scan timed out"));
+          }, 15000);
+        }),
+    }),
+    [emit],
+  );
+
+  return { workers, send, runCommand, resolveApproval, terminal, fs, preview };
 }
 
 /** Append streamed agent text to the last (in-progress) agent message. */
