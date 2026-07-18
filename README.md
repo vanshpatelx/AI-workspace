@@ -22,25 +22,40 @@ Instead of remotely controlling computers, you reconnect to persistent AI worksp
 - **Desktop App** — the control center. View workstations, continue conversations, monitor progress, browse files, preview sites, approve actions, open terminals.
 - **Connectivity** — direct + encrypted (Tailscale, WireGuard, local network, SSH tunnel). Optional stateless relay for remote access without VPNs.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vanshpatelx/AI-workspace/main/install.sh | bash
+```
+
+Then:
+
+```bash
+aiw worker init      # configure this machine (transport, keep-awake, agents)
+aiw worker start     # run the Worker
+aiw ui               # serve the Desktop UI at http://127.0.0.1:5180
+```
+
+Pair the UI with the code from `aiw worker status`. Requires Node 20+ and git.
+
 ## Run it (dev)
 
 ```bash
 pnpm install
+pnpm -r build
 
-# 1. Configure this machine as a Worker (once)
 pnpm --filter @ai-workspace/worker cli worker init --yes
-
-# 2. Start the Worker (transport server + keep-awake + agents)
-pnpm --filter @ai-workspace/worker start
-
-# 3. In another terminal, launch the Desktop UI
-pnpm --filter @ai-workspace/desktop dev
-# open http://localhost:5173
+pnpm --filter @ai-workspace/worker start          # terminal 1
+pnpm --filter @ai-workspace/desktop dev            # terminal 2 -> localhost:5173
 ```
 
-The Desktop dashboard shows the Worker, and the chat panel drives a real
-Claude Code agent (if `claude` is on your PATH). `VITE_WORKER_URL` overrides
-the Worker address for the UI.
+The dashboard shows the Worker, and the chat panel drives a real Claude Code
+agent (if `claude` is on your PATH). Sensitive actions — the agent's own
+included — are gated by the Approval Center. `VITE_WORKER_URL` overrides the
+Worker address for the UI.
+
+> Workspace packages resolve from `dist/`, so run `pnpm build:packages`
+> after changing `packages/*`.
 
 ## License
 

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import {
   configExists,
   configPath,
@@ -8,6 +9,7 @@ import {
 import { agentLabel } from "./agents.js";
 import { runInit, type InitOptions } from "./init.js";
 import { startWorker } from "./server.js";
+import { serveUi, uiDir, uiDirExists } from "./ui.js";
 
 /** Parse `--flag value` and boolean `--flag` pairs from args. */
 function parseFlags(args: string[]): Record<string, string | boolean> {
@@ -55,6 +57,7 @@ Usage:
                          --keep-awake <policy> while-active|always|off
   aiw worker start     Start the Worker (transport server + keep-awake)
   aiw worker status    Show this Worker's configuration
+  aiw ui [--port n]    Serve the Desktop UI (default http://127.0.0.1:5180)
   aiw help             Show this help
 
 Docs: https://github.com/vanshpatelx/AI-workspace`;
@@ -102,6 +105,18 @@ async function main(): Promise<void> {
 
   if (group === "help" || group === "--help" || group === "-h" || !group) {
     console.log(HELP);
+    return;
+  }
+
+  if (group === "ui") {
+    if (!uiDirExists()) {
+      console.error(`Desktop UI build not found at ${uiDir()}`);
+      console.error("Build it first:  pnpm --filter @ai-workspace/desktop build");
+      process.exitCode = 1;
+      return;
+    }
+    const uiFlags = parseFlags(argv.slice(1));
+    serveUi(typeof uiFlags.port === "string" ? Number(uiFlags.port) : 5180);
     return;
   }
 

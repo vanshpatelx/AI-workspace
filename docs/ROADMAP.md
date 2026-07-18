@@ -33,6 +33,6 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
 | # | Milestone | Status | Notes |
 |---|-----------|--------|-------|
-| D1 | Worker install: `curl \| sh` → `aiw` binary | ⬜ | interactive `aiw worker init` wizard already built |
+| D1 | Worker install: `curl \| sh` → `aiw` binary | ✅ | install.sh clones, builds, links `aiw`; `aiw ui` serves the built Desktop UI; verified running the full stack from `dist` |
 | D2 | Worker auto-start as launchd service | ⬜ | survive reboots |
 | D3 | Desktop `.dmg` download (Electron build) | ⬜ | GitHub Releases + auto-update later |
