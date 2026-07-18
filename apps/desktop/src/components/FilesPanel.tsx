@@ -6,6 +6,8 @@ import { Button } from "./ui/button.js";
 
 interface Props {
   url: string;
+  /** Browsing is rooted at this workspace's directory. */
+  workspaceId: string;
   fs: WorkersApi["fs"];
   connected: boolean;
 }
@@ -16,7 +18,7 @@ interface Props {
  * Directories navigate; files are fetched and rendered inline — text as code,
  * images/video/audio/PDF from a data URI — so nothing has to be downloaded.
  */
-export function FilesPanel({ url, fs, connected }: Props) {
+export function FilesPanel({ url, workspaceId, fs, connected }: Props) {
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [preview, setPreview] = useState<FilePreview | null>(null);
@@ -30,7 +32,7 @@ export function FilesPanel({ url, fs, connected }: Props) {
       setError(null);
       setPreview(null);
       try {
-        const listing = await fs.list(url, next);
+        const listing = await fs.list(url, workspaceId, next);
         setPath(listing.path);
         setEntries(listing.entries);
       } catch (err) {
@@ -39,7 +41,7 @@ export function FilesPanel({ url, fs, connected }: Props) {
         setLoading(false);
       }
     },
-    [connected, fs, url],
+    [connected, fs, url, workspaceId],
   );
 
   useEffect(() => {
@@ -50,7 +52,7 @@ export function FilesPanel({ url, fs, connected }: Props) {
     setLoading(true);
     setError(null);
     try {
-      setPreview(await fs.read(url, join(path, name)));
+      setPreview(await fs.read(url, workspaceId, join(path, name)));
     } catch (err) {
       setError((err as Error).message);
       setPreview(null);

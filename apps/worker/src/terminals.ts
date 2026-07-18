@@ -23,13 +23,13 @@ function defaultShell(): string {
 export class TerminalManager {
   private readonly ptys = new Map<string, IPty>();
 
-  constructor(
-    private cwd: string,
-    private handlers: TerminalHandlers,
-  ) {}
+  constructor(private handlers: TerminalHandlers) {}
 
-  /** Returns an error message if the PTY could not be started. */
-  start(terminalId: string, cols: number, rows: number): string | null {
+  /**
+   * Start a PTY in a workspace's directory. Returns an error message if the
+   * shell could not be spawned.
+   */
+  start(terminalId: string, cwd: string, cols: number, rows: number): string | null {
     if (this.ptys.has(terminalId)) return null;
 
     // node-pty only accepts string values; drop any undefined entries.
@@ -42,7 +42,7 @@ export class TerminalManager {
         name: "xterm-color",
         cols: Math.max(cols, 2),
         rows: Math.max(rows, 2),
-        cwd: this.cwd,
+        cwd,
         env: cleanEnv,
       });
     } catch (err) {

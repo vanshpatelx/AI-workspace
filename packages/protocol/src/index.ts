@@ -14,16 +14,38 @@ export type AgentKind =
 
 export type WorkerStatus = "online" | "offline" | "busy";
 
-export interface WorkspaceSummary {
+/**
+ * A machine running a Worker. One per Worker — the machine is the connection,
+ * not the unit of work.
+ */
+export interface MachineSummary {
   workerId: string;
   hostname: string;
   status: WorkerStatus;
-  repo: string | null;
   agent: AgentKind | null;
-  activeTask: string | null;
-  progress: number | null; // 0..1
+  /** Number of workspaces currently open on this machine. */
+  workspaceCount: number;
   cpu: number | null; // 0..1
   mem: number | null; // 0..1
+}
+
+/**
+ * A project directory opened on a Worker. A machine hosts many of these, each
+ * with its own chat sessions, terminals and file tree — this is the unit the
+ * user actually works in.
+ */
+export interface Workspace {
+  workspaceId: string;
+  /** Absolute path on the Worker's machine. */
+  path: string;
+  /** Display name, usually the directory basename. */
+  name: string;
+  /** Current git branch, when the path is a repo. */
+  branch: string | null;
+  activeTask: string | null;
+  /** Chat session ids belonging to this workspace. */
+  sessionIds: string[];
+  openedAt: number;
 }
 
 /** Why the Worker raised a notification. */
@@ -80,31 +102,46 @@ export type ApprovalKind =
 export interface ApprovalRequest {
   id: string;
   workerId: string;
+  /** Workspace the action would run in, when it originates from one. */
+  workspaceId?: string;
   kind: ApprovalKind;
   summary: string;
   details: string;
   createdAt: number;
 }
 
-/** Desktop -> Worker */
+/**
+ * Desktop -> Worker
+ *
+ * Anything that acts on project files or runs code carries a `workspaceId`:
+ * a machine hosts many workspaces, and an operation is meaningless without
+ * knowing which one it belongs to.
+ */
 export type ClientMessage =
   | { type: "hello"; clientId: string; token: string }
   | { type: "subscribe"; workerId: string }
-  | { type: "chat.send"; sessionId: string; text: string }
-  | { type: "command.run"; commandId: string; command: string }
+  | { type: "workspace.open"; requestId: string; path: string }
+  | { type: "workspace.close"; workspaceId: string }
+  | { type: "session.create"; requestId: string; workspaceId: string }
+  | { type: "chat.send"; workspaceId: string; sessionId: string; text: string }
+  | { type: "command.run"; workspaceId: string; commandId: string; command: string }
   | { type: "approval.resolve"; requestId: string; approved: boolean }
-  | { type: "terminal.start"; terminalId: string; cols: number; rows: number }
+  | { type: "terminal.start"; workspaceId: string; terminalId: string; cols: number; rows: number }
   | { type: "terminal.input"; terminalId: string; data: string }
   | { type: "terminal.resize"; terminalId: string; cols: number; rows: number }
   | { type: "terminal.close"; terminalId: string }
-  | { type: "fs.list"; requestId: string; path: string }
-  | { type: "fs.read"; requestId: string; path: string }
+  | { type: "fs.list"; requestId: string; workspaceId: string; path: string }
+  | { type: "fs.read"; requestId: string; workspaceId: string; path: string }
   | { type: "preview.scan"; requestId: string };
 
 /** Worker -> Desktop */
 export type ServerMessage =
   | { type: "auth.result"; ok: boolean; reason?: string }
-  | { type: "workspaces"; items: WorkspaceSummary[] }
+  | { type: "machine"; machine: MachineSummary }
+  | { type: "workspaces"; items: Workspace[] }
+  | { type: "workspace.opened"; requestId: string; workspace: Workspace }
+  | { type: "workspace.error"; requestId: string; message: string }
+  | { type: "session.created"; requestId: string; workspaceId: string; sessionId: string }
   | { type: "chat.history"; sessionId: string; messages: ChatTurn[] }
   | { type: "chat.delta"; sessionId: string; text: string }
   | { type: "approval.request"; request: ApprovalRequest }

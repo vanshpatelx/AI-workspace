@@ -5,6 +5,8 @@ import { CONFIG_DIR } from "./config.js";
 
 export interface SessionRecord {
   sessionId: string;
+  /** Workspace this conversation belongs to. */
+  workspaceId: string;
   agent: AgentKind;
   /** The agent's own session id, used to resume the conversation. */
   nativeSessionId: string | null;
@@ -49,12 +51,13 @@ export class SessionStore {
     }
   }
 
-  /** Get an existing session or create one bound to the given agent. */
-  ensure(sessionId: string, agent: AgentKind, now: number): SessionRecord {
+  /** Get an existing session or create one bound to a workspace and agent. */
+  ensure(sessionId: string, workspaceId: string, agent: AgentKind, now: number): SessionRecord {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing;
     const record: SessionRecord = {
       sessionId,
+      workspaceId,
       agent,
       nativeSessionId: null,
       messages: [],
@@ -64,6 +67,13 @@ export class SessionStore {
     this.sessions.set(sessionId, record);
     this.persist();
     return record;
+  }
+
+  /** Sessions belonging to a workspace, oldest first. */
+  forWorkspace(workspaceId: string): SessionRecord[] {
+    return [...this.sessions.values()]
+      .filter((s) => s.workspaceId === workspaceId)
+      .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   get(sessionId: string): SessionRecord | undefined {

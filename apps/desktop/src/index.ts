@@ -1,17 +1,15 @@
-import { PROTOCOL_VERSION, type WorkspaceSummary } from "@ai-workspace/protocol";
-
 /**
- * Desktop app (control center) — skeleton.
+ * Desktop library surface.
  *
- * The real app is an Electron shell with a renderer UI: dashboard, persistent
- * chat, localhost/media preview, terminal, file explorer, and approval center.
- * This stub only proves the workspace + protocol wiring compiles.
+ * The app itself is the React renderer in App.tsx; this module exposes small
+ * helpers shared with the headless client in connect.ts.
  */
+import { PROTOCOL_VERSION, type Workspace } from "@ai-workspace/protocol";
 
-export function renderDashboard(items: WorkspaceSummary[]): string {
-  if (items.length === 0) return "No workstations connected.";
+export function renderWorkspaces(items: Workspace[]): string {
+  if (items.length === 0) return "No workspaces open.";
   return items
-    .map((w) => `${w.hostname} [${w.status}] ${w.agent ?? "idle"} — ${w.activeTask ?? "—"}`)
+    .map((w) => `${w.name} (${w.path})${w.branch ? ` [${w.branch}]` : ""} — ${w.activeTask ?? "idle"}`)
     .join("\n");
 }
 

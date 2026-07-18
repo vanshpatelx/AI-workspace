@@ -10,9 +10,9 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROTOCOL_VERSION,
   type AgentKind,
+  type MachineSummary,
   type NotificationKind,
   type WorkerNotification,
-  type WorkspaceSummary,
 } from "@ai-workspace/protocol";
 import { TransportServer, type TransportConnection } from "@ai-workspace/transport";
 import type { WorkerConfig } from "./config.js";
@@ -21,7 +21,7 @@ import { agentLabel } from "./agents.js";
 import { SessionStore } from "./session.js";
 import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
-import { FileService } from "./files.js";
+import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers } from "./preview.js";
 import { RelayLink } from "./relay-link.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
@@ -58,7 +58,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   // with the Worker's pairing code.
   const authed = new Set<string>();
 
-  const files = new FileService(process.cwd());
+  const workspaces = new WorkspaceRegistry();
 
   /**
    * Secret for the local HTTP surface, regenerated every run.
@@ -89,22 +89,22 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     server.broadcast({ type: "notification", notification });
   }
 
-  const terminals = new TerminalManager(process.cwd(), {
+  const terminals = new TerminalManager({
     onData: (terminalId, data) => server.broadcast({ type: "terminal.output", terminalId, data }),
     onExit: (terminalId, code) => server.broadcast({ type: "terminal.exit", terminalId, code }),
   });
 
   let activeTasks = 0;
+  /** workspaceId -> what it is currently doing, for the dashboard. */
+  const activeByWorkspace = new Map<string, string>();
 
-  function describeSelf(): WorkspaceSummary {
+  function describeMachine(): MachineSummary {
     return {
       workerId: config.workerId,
       hostname: hostname(),
       status: activeTasks > 0 ? "busy" : "online",
-      repo: process.cwd(),
       agent: defaultAgent,
-      activeTask: activeTasks > 0 ? "agent running" : null,
-      progress: null,
+      workspaceCount: workspaces.ids().length,
       cpu: null,
       mem: null,
     };
@@ -112,7 +112,24 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   let server: TransportServer;
 
-  async function handleChat(conn: TransportConnection, sessionId: string, text: string): Promise<void> {
+  /** Push machine + workspace state to every connected Desktop. */
+  async function broadcastState(): Promise<void> {
+    server.broadcast({ type: "machine", machine: describeMachine() });
+    server.broadcast({ type: "workspaces", items: await workspaces.list(activeByWorkspace) });
+  }
+
+  function markBusy(workspaceId: string, what: string | null): void {
+    if (what) activeByWorkspace.set(workspaceId, what);
+    else activeByWorkspace.delete(workspaceId);
+    void broadcastState();
+  }
+
+  async function handleChat(
+    conn: TransportConnection,
+    workspaceId: string,
+    sessionId: string,
+    text: string,
+  ): Promise<void> {
     if (!defaultAgent) {
       notify("agent-error", "error", "No agent configured on this Worker");
       return;
@@ -123,19 +140,29 @@ export function startWorker(config: WorkerConfig): RunningWorker {
       return;
     }
 
+    let cwd: string;
+    try {
+      cwd = workspaces.pathOf(workspaceId);
+    } catch (err) {
+      notify("agent-error", "error", (err as Error).message);
+      return;
+    }
+
     const now = Date.now();
-    const record = sessions.ensure(sessionId, defaultAgent, now);
+    const record = sessions.ensure(sessionId, workspaceId, defaultAgent, now);
+    workspaces.addSession(workspaceId, sessionId);
     sessions.appendTurn(sessionId, { role: "user", text, at: now });
 
     activeTasks++;
     keepAwake.taskStarted();
-    server.broadcast({ type: "workspaces", items: [describeSelf()] });
+    markBusy(workspaceId, "agent running");
 
     let reply = "";
     try {
       const result = await adapter.runTurn({
+        // The agent runs in the workspace's directory, not the Worker's.
         text,
-        cwd: process.cwd(),
+        cwd,
         resumeSessionId: record.nativeSessionId,
         handlers: {
           onDelta: (delta) => {
@@ -154,7 +181,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     } finally {
       activeTasks = Math.max(0, activeTasks - 1);
       keepAwake.taskEnded();
-      server.broadcast({ type: "workspaces", items: [describeSelf()] });
+      markBusy(workspaceId, null);
     }
   }
 
@@ -168,7 +195,26 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     });
   }
 
-  async function handleCommand(conn: TransportConnection, commandId: string, command: string): Promise<void> {
+  async function handleCommand(
+    conn: TransportConnection,
+    workspaceId: string,
+    commandId: string,
+    command: string,
+  ): Promise<void> {
+    let cwd: string;
+    try {
+      cwd = workspaces.pathOf(workspaceId);
+    } catch (err) {
+      conn.send({
+        type: "command.result",
+        commandId,
+        code: null,
+        output: (err as Error).message,
+        approved: false,
+      });
+      return;
+    }
+
     const sensitive = classifyCommand(command);
 
     if (sensitive) {
@@ -178,6 +224,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         sensitive.summary,
         command,
         Date.now(),
+        workspaceId,
       );
       // Broadcast so any connected Desktop can approve.
       server.broadcast({ type: "approval.request", request });
@@ -201,9 +248,9 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
     activeTasks++;
     keepAwake.taskStarted();
-    server.broadcast({ type: "workspaces", items: [describeSelf()] });
+    markBusy(workspaceId, `running: ${command.slice(0, 40)}`);
     try {
-      const { code, output } = await runShell(command, process.cwd());
+      const { code, output } = await runShell(command, cwd);
       conn.send({ type: "command.result", commandId, code, output, approved: true });
       if (code === 0) {
         notify("command-complete", "info", `Finished: ${command}`, output);
@@ -215,7 +262,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     } finally {
       activeTasks = Math.max(0, activeTasks - 1);
       keepAwake.taskEnded();
-      server.broadcast({ type: "workspaces", items: [describeSelf()] });
+      markBusy(workspaceId, null);
     }
   }
 
@@ -367,7 +414,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             authed.add(conn.id);
             console.log(`[worker] auth OK for ${msg.clientId}`);
             conn.send({ type: "auth.result", ok: true });
-            conn.send({ type: "workspaces", items: [describeSelf()] });
+            void broadcastState();
             // Rehydrate persisted conversations so the Desktop reconnects with
             // full context instead of an empty chat.
             for (const s of sessions.list()) {
@@ -379,15 +426,55 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             break;
           }
           case "subscribe":
-            conn.send({ type: "workspaces", items: [describeSelf()] });
+            void broadcastState();
             break;
+          case "workspace.open": {
+            const requestId = msg.requestId;
+            try {
+              const opened = workspaces.open(msg.path);
+              console.log(`[worker] workspace opened: ${opened.path}`);
+              void workspaces
+                .list(activeByWorkspace)
+                .then(async (all) => {
+                  const listed = all.find((w) => w.workspaceId === opened.workspaceId);
+                  if (listed) conn.send({ type: "workspace.opened", requestId, workspace: listed });
+                  await broadcastState();
+                })
+                .catch(() => {});
+            } catch (err) {
+              conn.send({
+                type: "workspace.error",
+                requestId,
+                message: (err as Error).message,
+              });
+            }
+            break;
+          }
+          case "workspace.close":
+            workspaces.close(msg.workspaceId);
+            console.log(`[worker] workspace closed: ${msg.workspaceId}`);
+            void broadcastState();
+            break;
+          case "session.create": {
+            // Several conversations can run in one workspace at once.
+            const sessionId = `s_${Math.random().toString(36).slice(2, 10)}`;
+            workspaces.addSession(msg.workspaceId, sessionId);
+            conn.send({
+              type: "session.created",
+              requestId: msg.requestId,
+              workspaceId: msg.workspaceId,
+              sessionId,
+            });
+            void broadcastState();
+            break;
+          }
           case "chat.send":
-            console.log(`[worker] chat(${msg.sessionId}): ${msg.text.slice(0, 60)}`);
-            void handleChat(conn, msg.sessionId, msg.text);
+            console.log(`[worker] chat(${msg.workspaceId}/${msg.sessionId}): ${msg.text.slice(0, 50)}`);
+            void handleChat(conn, msg.workspaceId, msg.sessionId, msg.text);
             break;
           case "command.run":
-            console.log(`[worker] command(${msg.commandId}): ${msg.command.slice(0, 80)}`);
-            void handleCommand(conn, msg.commandId, msg.command);
+            console.log(`[worker] command(${msg.workspaceId}): ${msg.command.slice(0, 60)}`);
+            void handleCommand(conn, msg.workspaceId, msg.commandId, msg.command);
             break;
           case "approval.resolve":
             if (!approvals.resolve(msg.requestId, msg.approved)) {
@@ -395,7 +482,14 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             }
             break;
           case "terminal.start": {
-            const err = terminals.start(msg.terminalId, msg.cols, msg.rows);
+            let cwd: string;
+            try {
+              cwd = workspaces.pathOf(msg.workspaceId);
+            } catch (e) {
+              conn.send({ type: "terminal.exit", terminalId: msg.terminalId, code: null });
+              break;
+            }
+            const err = terminals.start(msg.terminalId, cwd, msg.cols, msg.rows);
             if (err) {
               console.error(`[worker] ${err}`);
               notify("agent-error", "error", "Terminal failed to start", err);
@@ -415,22 +509,42 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             terminals.close(msg.terminalId);
             break;
           case "fs.list":
-            files
-              .list(msg.path)
-              .then(({ path, entries }) =>
-                conn.send({ type: "fs.listing", requestId: msg.requestId, path, entries }),
-              )
-              .catch((err: Error) =>
-                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
-              );
+            // Each workspace has its own file service, so traversal protection
+            // is scoped to that project's root.
+            try {
+              workspaces
+                .filesFor(msg.workspaceId)
+                .list(msg.path)
+                .then(({ path, entries }) =>
+                  conn.send({ type: "fs.listing", requestId: msg.requestId, path, entries }),
+                )
+                .catch((err: Error) =>
+                  conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+                );
+            } catch (err) {
+              conn.send({
+                type: "fs.error",
+                requestId: msg.requestId,
+                message: (err as Error).message,
+              });
+            }
             break;
           case "fs.read":
-            files
-              .read(msg.path)
-              .then((file) => conn.send({ type: "fs.file", requestId: msg.requestId, ...file }))
-              .catch((err: Error) =>
-                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
-              );
+            try {
+              workspaces
+                .filesFor(msg.workspaceId)
+                .read(msg.path)
+                .then((file) => conn.send({ type: "fs.file", requestId: msg.requestId, ...file }))
+                .catch((err: Error) =>
+                  conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+                );
+            } catch (err) {
+              conn.send({
+                type: "fs.error",
+                requestId: msg.requestId,
+                message: (err as Error).message,
+              });
+            }
             break;
           case "preview.scan":
             detectPreviewServers(config.port)

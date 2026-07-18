@@ -6,6 +6,8 @@ import type { WorkersApi } from "../lib/useWorkers.js";
 
 interface Props {
   url: string;
+  /** The PTY is spawned in this workspace's directory. */
+  workspaceId: string;
   terminalId: string;
   terminal: WorkersApi["terminal"];
   connected: boolean;
@@ -18,7 +20,7 @@ interface Props {
  * React state — the socket writes straight into the emulator. React only
  * mounts/unmounts it and forwards resizes.
  */
-export function TerminalPanel({ url, terminalId, terminal, connected }: Props) {
+export function TerminalPanel({ url, workspaceId, terminalId, terminal, connected }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,7 +52,7 @@ export function TerminalPanel({ url, terminalId, terminal, connected }: Props) {
     // Terminal -> worker
     const onData = term.onData((data) => terminal.input(url, terminalId, data));
 
-    terminal.start(url, terminalId, term.cols, term.rows);
+    terminal.start(url, workspaceId, terminalId, term.cols, term.rows);
 
     const onResize = () => {
       fit.fit();
@@ -65,7 +67,7 @@ export function TerminalPanel({ url, terminalId, terminal, connected }: Props) {
       terminal.close(url, terminalId);
       term.dispose();
     };
-  }, [url, terminalId, terminal, connected]);
+  }, [url, workspaceId, terminalId, terminal, connected]);
 
   if (!connected) {
     return (

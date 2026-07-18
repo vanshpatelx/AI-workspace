@@ -36,9 +36,11 @@ export class ApprovalManager {
     summary: string,
     details: string,
     now: number,
+    workspaceId?: string,
   ): { request: ApprovalRequest; decision: Promise<boolean> } {
     const id = `a${++this.seq}`;
     const request: ApprovalRequest = { id, workerId, kind, summary, details, createdAt: now };
+    if (workspaceId) request.workspaceId = workspaceId;
     const decision = new Promise<boolean>((resolve) => {
       this.pending.set(id, { request, resolve });
     });

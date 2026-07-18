@@ -3,10 +3,11 @@ import type {
   ApprovalRequest,
   ClientMessage,
   FileEntry,
+  MachineSummary,
   PreviewServer,
   ServerMessage,
   WorkerNotification,
-  WorkspaceSummary,
+  Workspace,
 } from "@ai-workspace/protocol";
 
 export interface FileListing {
@@ -50,14 +51,18 @@ export interface WorkerTarget {
   token: string;
 }
 
-/** Live state for a single Worker connection. */
+/** Live state for a single Worker connection (one machine). */
 export interface WorkerState {
   url: string;
   connection: ConnectionState;
-  workspaces: WorkspaceSummary[];
-  messages: ChatMessage[];
+  machine: MachineSummary | null;
+  /** Project directories open on this machine. */
+  workspaces: Workspace[];
+  /** Chat transcripts keyed by sessionId — a workspace may have several. */
+  messages: Record<string, ChatMessage[]>;
   approvals: ApprovalRequest[];
-  commands: CommandLine[];
+  /** Command history keyed by workspaceId. */
+  commands: Record<string, CommandLine[]>;
   notices: WorkerNotification[];
 }
 
@@ -66,19 +71,22 @@ export type TerminalListener = (terminalId: string, data: string) => void;
 
 export interface WorkersApi {
   workers: Record<string, WorkerState>;
-  send: (url: string, text: string) => void;
-  runCommand: (url: string, command: string) => void;
+  send: (url: string, workspaceId: string, sessionId: string, text: string) => void;
+  runCommand: (url: string, workspaceId: string, command: string) => void;
   resolveApproval: (url: string, requestId: string, approved: boolean) => void;
+  openWorkspace: (url: string, path: string) => Promise<Workspace>;
+  closeWorkspace: (url: string, workspaceId: string) => void;
+  createSession: (url: string, workspaceId: string) => Promise<string>;
   terminal: {
-    start: (url: string, terminalId: string, cols: number, rows: number) => void;
+    start: (url: string, workspaceId: string, terminalId: string, cols: number, rows: number) => void;
     input: (url: string, terminalId: string, data: string) => void;
     resize: (url: string, terminalId: string, cols: number, rows: number) => void;
     close: (url: string, terminalId: string) => void;
     subscribe: (listener: TerminalListener) => () => void;
   };
   fs: {
-    list: (url: string, path: string) => Promise<FileListing>;
-    read: (url: string, path: string) => Promise<FilePreview>;
+    list: (url: string, workspaceId: string, path: string) => Promise<FileListing>;
+    read: (url: string, workspaceId: string, path: string) => Promise<FilePreview>;
   };
   preview: {
     scan: (url: string) => Promise<PreviewListing>;
@@ -92,10 +100,11 @@ function emptyState(url: string): WorkerState {
   return {
     url,
     connection: "connecting",
+    machine: null,
     workspaces: [],
-    messages: [],
+    messages: {},
     approvals: [],
-    commands: [],
+    commands: {},
     notices: [],
   };
 }
@@ -181,19 +190,39 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                 socket.close();
               }
               break;
+            case "machine":
+              patch(target.url, (s) => ({ ...s, machine: msg.machine }));
+              break;
             case "workspaces":
               patch(target.url, (s) => ({ ...s, workspaces: msg.items }));
               break;
+            case "workspace.opened":
+            case "workspace.error":
+            case "session.created": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              if (msg.type === "workspace.error") pending?.reject(new Error(msg.message));
+              else if (msg.type === "workspace.opened") pending?.resolve(msg.workspace);
+              else pending?.resolve(msg.sessionId);
+              break;
+            }
             case "chat.history":
-              if (msg.sessionId === SESSION_ID) {
-                patch(target.url, (s) => ({
-                  ...s,
-                  messages: msg.messages.map((m) => ({ role: m.role, text: m.text })),
-                }));
-              }
+              patch(target.url, (s) => ({
+                ...s,
+                messages: {
+                  ...s.messages,
+                  [msg.sessionId]: msg.messages.map((m) => ({ role: m.role, text: m.text })),
+                },
+              }));
               break;
             case "chat.delta":
-              patch(target.url, (s) => ({ ...s, messages: appendAgentDelta(s.messages, msg.text) }));
+              patch(target.url, (s) => ({
+                ...s,
+                messages: {
+                  ...s.messages,
+                  [msg.sessionId]: appendAgentDelta(s.messages[msg.sessionId] ?? [], msg.text),
+                },
+              }));
               break;
             case "approval.request":
               patch(target.url, (s) => ({
@@ -210,19 +239,22 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               }));
               break;
             case "command.result":
-              patch(target.url, (s) => ({
-                ...s,
-                commands: s.commands.map((c) =>
-                  c.commandId === msg.commandId
-                    ? {
-                        ...c,
-                        status: msg.approved ? "done" : "rejected",
-                        code: msg.code,
-                        output: msg.output,
-                      }
-                    : c,
-                ),
-              }));
+              patch(target.url, (s) => {
+                const commands: Record<string, CommandLine[]> = {};
+                for (const [wsId, lines] of Object.entries(s.commands)) {
+                  commands[wsId] = lines.map((c) =>
+                    c.commandId === msg.commandId
+                      ? {
+                          ...c,
+                          status: msg.approved ? ("done" as const) : ("rejected" as const),
+                          code: msg.code,
+                          output: msg.output,
+                        }
+                      : c,
+                  );
+                }
+                return { ...s, commands };
+              });
               break;
             case "terminal.output":
               // Bypasses React state: PTY output is high-frequency and goes
@@ -306,20 +338,27 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
   }, []);
 
   const send = useCallback(
-    (url: string, text: string) => {
+    (url: string, workspaceId: string, sessionId: string, text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
       patch(url, (s) => ({
         ...s,
-        messages: [...s.messages, { role: "user", text: trimmed }, { role: "agent", text: "" }],
+        messages: {
+          ...s.messages,
+          [sessionId]: [
+            ...(s.messages[sessionId] ?? []),
+            { role: "user", text: trimmed },
+            { role: "agent", text: "" },
+          ],
+        },
       }));
-      emit(url, { type: "chat.send", sessionId: SESSION_ID, text: trimmed });
+      emit(url, { type: "chat.send", workspaceId, sessionId, text: trimmed });
     },
     [emit, patch],
   );
 
   const runCommand = useCallback(
-    (url: string, command: string) => {
+    (url: string, workspaceId: string, command: string) => {
       const trimmed = command.trim();
       if (!trimmed) return;
       const line: CommandLine = {
@@ -327,10 +366,47 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
         command: trimmed,
         status: "pending",
       };
-      patch(url, (s) => ({ ...s, commands: [line, ...s.commands].slice(0, 20) }));
-      emit(url, { type: "command.run", commandId: line.commandId, command: trimmed });
+      patch(url, (s) => ({
+        ...s,
+        commands: {
+          ...s.commands,
+          [workspaceId]: [line, ...(s.commands[workspaceId] ?? [])].slice(0, 20),
+        },
+      }));
+      emit(url, { type: "command.run", workspaceId, commandId: line.commandId, command: trimmed });
     },
     [emit, patch],
+  );
+
+  /** Promise-based request helper shared by workspace/session/fs calls. */
+  const request = useCallback(
+    <T,>(url: string, build: (requestId: string) => ClientMessage): Promise<T> =>
+      new Promise<T>((resolve, reject) => {
+        const requestId = `rq-${++commandCounter}`;
+        fsPending.current.set(requestId, { resolve, reject });
+        emit(url, build(requestId));
+        setTimeout(() => {
+          if (fsPending.current.delete(requestId)) reject(new Error("request timed out"));
+        }, 15000);
+      }),
+    [emit],
+  );
+
+  const openWorkspace = useCallback(
+    (url: string, path: string) =>
+      request<Workspace>(url, (requestId) => ({ type: "workspace.open", requestId, path })),
+    [request],
+  );
+
+  const closeWorkspace = useCallback(
+    (url: string, workspaceId: string) => emit(url, { type: "workspace.close", workspaceId }),
+    [emit],
+  );
+
+  const createSession = useCallback(
+    (url: string, workspaceId: string) =>
+      request<string>(url, (requestId) => ({ type: "session.create", requestId, workspaceId })),
+    [request],
   );
 
   const resolveApproval = useCallback(
@@ -343,8 +419,8 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
 
   const terminal = useMemo(
     () => ({
-      start: (url: string, terminalId: string, cols: number, rows: number) =>
-        emit(url, { type: "terminal.start", terminalId, cols, rows }),
+      start: (url: string, workspaceId: string, terminalId: string, cols: number, rows: number) =>
+        emit(url, { type: "terminal.start", workspaceId, terminalId, cols, rows }),
       input: (url: string, terminalId: string, data: string) =>
         emit(url, { type: "terminal.input", terminalId, data }),
       resize: (url: string, terminalId: string, cols: number, rows: number) =>
@@ -360,42 +436,46 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [emit],
   );
 
-  const fs = useMemo(() => {
-    const request = <T,>(url: string, msg: (requestId: string) => ClientMessage): Promise<T> =>
-      new Promise<T>((resolve, reject) => {
-        const requestId = `fs-${++commandCounter}`;
-        fsPending.current.set(requestId, { resolve, reject });
-        emit(url, msg(requestId));
-        // Don't leak a pending entry if the Worker never answers.
-        setTimeout(() => {
-          if (fsPending.current.delete(requestId)) reject(new Error("request timed out"));
-        }, 15000);
-      });
-
-    return {
-      list: (url: string, path: string) =>
-        request<FileListing>(url, (requestId) => ({ type: "fs.list", requestId, path })),
-      read: (url: string, path: string) =>
-        request<FilePreview>(url, (requestId) => ({ type: "fs.read", requestId, path })),
-    };
-  }, [emit]);
+  const fs = useMemo(
+    () => ({
+      list: (url: string, workspaceId: string, path: string) =>
+        request<FileListing>(url, (requestId) => ({
+          type: "fs.list",
+          requestId,
+          workspaceId,
+          path,
+        })),
+      read: (url: string, workspaceId: string, path: string) =>
+        request<FilePreview>(url, (requestId) => ({
+          type: "fs.read",
+          requestId,
+          workspaceId,
+          path,
+        })),
+    }),
+    [request],
+  );
 
   const preview = useMemo(
     () => ({
       scan: (url: string) =>
-        new Promise<PreviewListing>((resolve, reject) => {
-          const requestId = `pv-${++commandCounter}`;
-          fsPending.current.set(requestId, { resolve, reject });
-          emit(url, { type: "preview.scan", requestId });
-          setTimeout(() => {
-            if (fsPending.current.delete(requestId)) reject(new Error("scan timed out"));
-          }, 15000);
-        }),
+        request<PreviewListing>(url, (requestId) => ({ type: "preview.scan", requestId })),
     }),
-    [emit],
+    [request],
   );
 
-  return { workers, send, runCommand, resolveApproval, terminal, fs, preview };
+  return {
+    workers,
+    send,
+    runCommand,
+    resolveApproval,
+    openWorkspace,
+    closeWorkspace,
+    createSession,
+    terminal,
+    fs,
+    preview,
+  };
 }
 
 /**

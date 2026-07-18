@@ -1,12 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Cpu,
-  GitBranch,
   MonitorSmartphone,
   Send,
   Bot,
-  Wifi,
-  WifiOff,
   ShieldAlert,
   Check,
   X,
@@ -16,8 +12,10 @@ import {
   Trash2,
   FolderTree,
   Globe,
+  FolderOpen,
+  GitBranch,
 } from "lucide-react";
-import type { ApprovalRequest, WorkspaceSummary } from "@ai-workspace/protocol";
+import type { ApprovalRequest, Workspace } from "@ai-workspace/protocol";
 import {
   useWorkers,
   type CommandLine,
@@ -37,6 +35,20 @@ import { NotificationCenter, type FeedItem } from "./components/NotificationCent
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
 
+const TABS = [
+  { id: "chat", label: "Chat", Icon: Bot },
+  { id: "terminal", label: "Terminal", Icon: Terminal },
+  { id: "files", label: "Files", Icon: FolderTree },
+  { id: "preview", label: "Preview", Icon: Globe },
+] as const;
+
+/** What the user is currently looking at: a workspace, and a chat inside it. */
+interface Selection {
+  url: string;
+  workspaceId: string;
+  sessionId: string | null;
+}
+
 function loadTargets(): WorkerTarget[] {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -48,220 +60,278 @@ function loadTargets(): WorkerTarget[] {
 
 export function App() {
   const [targets, setTargets] = useState<WorkerTarget[]>(loadTargets);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [tab, setTab] = useState<"chat" | "terminal" | "files" | "preview">("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { workers, send, runCommand, resolveApproval, terminal, fs, preview } = useWorkers(targets);
+  const api = useWorkers(targets);
+  const { workers, send, runCommand, resolveApproval, openWorkspace, closeWorkspace, createSession } =
+    api;
 
-  const active: WorkerState | null = useMemo(() => {
-    const url = selected && workers[selected] ? selected : targets[0]?.url;
-    return url ? workers[url] ?? null : null;
-  }, [selected, workers, targets]);
+  // Resolve the selection against live state, falling back to the first
+  // workspace so the app is never pointing at something that vanished.
+  const active = useMemo(() => {
+    const worker = selection ? workers[selection.url] : undefined;
+    const workspace = worker?.workspaces.find((w) => w.workspaceId === selection?.workspaceId);
+    if (worker && workspace) return { worker, workspace };
+    for (const w of Object.values(workers)) {
+      const first = w.workspaces[0];
+      if (first) return { worker: w, workspace: first };
+    }
+    return null;
+  }, [selection, workers]);
+
+  const activeSessionId = useMemo(() => {
+    if (!active) return null;
+    const ids = active.workspace.sessionIds;
+    if (selection?.sessionId && ids.includes(selection.sessionId)) return selection.sessionId;
+    return ids[0] ?? null;
+  }, [active, selection]);
+
+  const messages = useMemo(
+    () => (activeSessionId && active ? active.worker.messages[activeSessionId] ?? [] : []),
+    [active, activeSessionId],
+  );
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [active?.messages]);
+  }, [messages]);
 
-  const persist = (next: WorkerTarget[]) => {
-    localStorage.setItem(STORE_KEY, JSON.stringify(next));
-    setTargets(next);
-  };
-  const addTarget = (t: WorkerTarget) => {
-    persist([...targets.filter((x) => x.url !== t.url), t]);
-    setSelected(t.url);
-    setAdding(false);
-  };
-  const removeTarget = (url: string) => {
-    persist(targets.filter((t) => t.url !== url));
-    if (selected === url) setSelected(null);
-  };
-
-  // Every pending approval across every machine.
-  const allApprovals = useMemo(
-    () =>
-      Object.values(workers).flatMap((w) =>
-        w.approvals.map((a) => ({ approval: a, url: w.url, host: w.workspaces[0]?.hostname ?? w.url })),
-      ),
-    [workers],
-  );
-
-  // Newest-first feed across every machine.
   const feed: FeedItem[] = useMemo(
     () =>
       Object.values(workers)
         .flatMap((w) =>
-          w.notices.map((n) => ({
-            notification: n,
-            host: w.workspaces[0]?.hostname ?? w.url,
-          })),
+          w.notices.map((n) => ({ notification: n, host: w.machine?.hostname ?? w.url })),
         )
         .sort((a, b) => b.notification.at - a.notification.at),
     [workers],
   );
 
-  // Ask once for OS notification permission; the in-app center works regardless.
+  const allApprovals = useMemo(
+    () =>
+      Object.values(workers).flatMap((w) =>
+        w.approvals.map((a) => ({ approval: a, url: w.url, host: w.machine?.hostname ?? w.url })),
+      ),
+    [workers],
+  );
+
   useEffect(() => {
     if (typeof Notification !== "undefined" && Notification.permission === "default") {
       void Notification.requestPermission().catch(() => {});
     }
   }, []);
 
+  const persist = (next: WorkerTarget[]) => {
+    localStorage.setItem(STORE_KEY, JSON.stringify(next));
+    setTargets(next);
+  };
+
+  // Hooks are all above this branch on purpose — an early return that skips
+  // hooks changes their order between renders and crashes React.
   if (targets.length === 0 || adding) {
     return (
       <PairingScreen
-        onPair={addTarget}
+        onPair={(t) => {
+          persist([...targets.filter((x) => x.url !== t.url), t]);
+          setAdding(false);
+        }}
         onCancel={targets.length > 0 ? () => setAdding(false) : undefined}
       />
     );
   }
 
+  const connected = active?.worker.connection === "connected";
+
+  const submitChat = async () => {
+    if (!active || !draft.trim()) return;
+    // First message in a workspace creates its session implicitly.
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      sessionId = await createSession(active.worker.url, active.workspace.workspaceId);
+      setSelection({
+        url: active.worker.url,
+        workspaceId: active.workspace.workspaceId,
+        sessionId,
+      });
+    }
+    send(active.worker.url, active.workspace.workspaceId, sessionId, draft);
+    setDraft("");
+  };
+
   return (
     <div className="flex h-screen flex-col">
-      <Header
-        workstations={Object.values(workers)}
-        feed={feed}
-        onAdd={() => setAdding(true)}
-      />
-      <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[1fr_1.2fr]">
-        <section className="flex flex-col gap-3 overflow-y-auto pr-1">
-          <h2 className="px-1 text-sm font-medium text-muted-foreground">
-            Workstations ({targets.length})
-          </h2>
+      <header className="flex items-center justify-between border-b px-5 py-3">
+        <div className="flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <MonitorSmartphone className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold leading-tight">AI Workspace</div>
+            <div className="text-xs text-muted-foreground">
+              {Object.values(workers).filter((w) => w.connection === "connected").length} of{" "}
+              {targets.length} machines ·{" "}
+              {Object.values(workers).reduce((n, w) => n + w.workspaces.length, 0)} workspaces
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <NotificationCenter items={feed} />
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+            <Plus className="h-3.5 w-3.5" /> Add machine
+          </Button>
+        </div>
+      </header>
 
-          {targets.map((t) => {
-            const w = workers[t.url];
-            return (
-              <WorkstationCard
-                key={t.url}
-                url={t.url}
-                state={w}
-                selected={active?.url === t.url}
-                onSelect={() => setSelected(t.url)}
-                onRemove={() => removeTarget(t.url)}
-              />
-            );
-          })}
+      <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
+        <section className="flex flex-col gap-3 overflow-y-auto pr-1">
+          {targets.map((t) => (
+            <MachinePanel
+              key={t.url}
+              url={t.url}
+              state={workers[t.url]}
+              activeWorkspaceId={active?.workspace.workspaceId ?? null}
+              onSelectWorkspace={(workspaceId) =>
+                setSelection({ url: t.url, workspaceId, sessionId: null })
+              }
+              onOpen={(path) => openWorkspace(t.url, path)}
+              onCloseWorkspace={(workspaceId) => closeWorkspace(t.url, workspaceId)}
+              onRemove={() => persist(targets.filter((x) => x.url !== t.url))}
+            />
+          ))}
 
           <ApprovalCenter items={allApprovals} onResolve={resolveApproval} />
 
           {active && (
             <CommandRunner
-              connected={active.connection === "connected"}
-              commands={active.commands}
-              onRun={(cmd) => runCommand(active.url, cmd)}
+              connected={!!connected}
+              commands={active.worker.commands[active.workspace.workspaceId] ?? []}
+              workspaceName={active.workspace.name}
+              onRun={(cmd) => runCommand(active.worker.url, active.workspace.workspaceId, cmd)}
             />
           )}
         </section>
 
         <Card className="flex min-h-0 flex-col">
           <CardHeader className="flex-row items-center gap-1 space-y-0 border-b py-2">
-            <Button
-              size="sm"
-              variant={tab === "chat" ? "secondary" : "ghost"}
-              onClick={() => setTab("chat")}
-            >
-              <Bot className="h-3.5 w-3.5" /> Chat
-            </Button>
-            <Button
-              size="sm"
-              variant={tab === "terminal" ? "secondary" : "ghost"}
-              onClick={() => setTab("terminal")}
-            >
-              <Terminal className="h-3.5 w-3.5" /> Terminal
-            </Button>
-            <Button
-              size="sm"
-              variant={tab === "files" ? "secondary" : "ghost"}
-              onClick={() => setTab("files")}
-            >
-              <FolderTree className="h-3.5 w-3.5" /> Files
-            </Button>
-            <Button
-              size="sm"
-              variant={tab === "preview" ? "secondary" : "ghost"}
-              onClick={() => setTab("preview")}
-            >
-              <Globe className="h-3.5 w-3.5" /> Preview
-            </Button>
+            {TABS.map(({ id, label, Icon }) => (
+              <Button
+                key={id}
+                size="sm"
+                variant={tab === id ? "secondary" : "ghost"}
+                onClick={() => setTab(id)}
+                disabled={!active}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {/* Real text, not CSS-capitalised — that keeps the accessible
+                    name matching what people actually see. */}
+                <span>{label}</span>
+              </Button>
+            ))}
             {active && (
-              <span className="ml-auto text-xs text-muted-foreground">
-                {active.workspaces[0]?.hostname ?? active.url}
+              <span className="ml-auto truncate pl-2 text-xs text-muted-foreground">
+                {active.workspace.name} · {active.worker.machine?.hostname ?? active.worker.url}
               </span>
             )}
           </CardHeader>
 
-          {tab === "terminal" ? (
-            <div className="min-h-0 flex-1 bg-[#0a0a0b] p-2">
-              {active && (
-                <TerminalPanel
-                  key={active.url}
-                  url={active.url}
-                  terminalId="main"
-                  terminal={terminal}
-                  connected={active.connection === "connected"}
-                />
-              )}
+          {!active ? (
+            <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
+              Open a workspace to get started — type a project path on the left.
             </div>
-          ) : tab === "preview" ? (
-            <div className="min-h-0 flex-1">
-              {active && (
-                <PreviewPanel
-                  key={active.url}
-                  url={active.url}
-                  preview={preview}
-                  connected={active.connection === "connected"}
-                />
-              )}
+          ) : tab === "terminal" ? (
+            <div className="min-h-0 flex-1 bg-[#0a0a0b] p-2">
+              <TerminalPanel
+                key={`${active.worker.url}:${active.workspace.workspaceId}`}
+                url={active.worker.url}
+                workspaceId={active.workspace.workspaceId}
+                terminalId={`term-${active.workspace.workspaceId}`}
+                terminal={api.terminal}
+                connected={!!connected}
+              />
             </div>
           ) : tab === "files" ? (
             <div className="min-h-0 flex-1">
-              {active && (
-                <FilesPanel
-                  key={active.url}
-                  url={active.url}
-                  fs={fs}
-                  connected={active.connection === "connected"}
-                />
-              )}
+              <FilesPanel
+                key={`${active.worker.url}:${active.workspace.workspaceId}`}
+                url={active.worker.url}
+                workspaceId={active.workspace.workspaceId}
+                fs={api.fs}
+                connected={!!connected}
+              />
+            </div>
+          ) : tab === "preview" ? (
+            <div className="min-h-0 flex-1">
+              <PreviewPanel
+                key={active.worker.url}
+                url={active.worker.url}
+                preview={api.preview}
+                connected={!!connected}
+              />
             </div>
           ) : (
             <>
+              {/* A workspace can hold several conversations at once. */}
+              <div className="flex items-center gap-1 overflow-x-auto border-b px-2 py-1.5">
+                {active.workspace.sessionIds.map((id, i) => (
+                  <Button
+                    key={id}
+                    size="sm"
+                    variant={id === activeSessionId ? "secondary" : "ghost"}
+                    className="h-6 shrink-0 px-2 text-xs"
+                    onClick={() =>
+                      setSelection({
+                        url: active.worker.url,
+                        workspaceId: active.workspace.workspaceId,
+                        sessionId: id,
+                      })
+                    }
+                  >
+                    Session {i + 1}
+                  </Button>
+                ))}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 shrink-0 px-2 text-xs"
+                  disabled={!connected}
+                  onClick={async () => {
+                    const sessionId = await createSession(
+                      active.worker.url,
+                      active.workspace.workspaceId,
+                    );
+                    setSelection({
+                      url: active.worker.url,
+                      workspaceId: active.workspace.workspaceId,
+                      sessionId,
+                    });
+                  }}
+                >
+                  <Plus className="h-3 w-3" /> New session
+                </Button>
+              </div>
+
               <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-                {!active || active.messages.length === 0 ? (
+                {messages.length === 0 ? (
                   <p className="mt-8 text-center text-sm text-muted-foreground">
-                    Send a message to the agent on this workstation.
+                    Chatting in <span className="font-medium">{active.workspace.name}</span> — the
+                    agent runs in that directory.
                   </p>
                 ) : (
-                  active.messages.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)
+                  messages.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)
                 )}
               </div>
+
               <div className="flex items-center gap-2 border-t p-3">
                 <Input
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && active) {
-                      send(active.url, draft);
-                      setDraft("");
-                    }
-                  }}
-                  placeholder={
-                    active?.connection === "connected" ? "Message the agent…" : "Connecting…"
-                  }
-                  disabled={active?.connection !== "connected"}
+                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void submitChat()}
+                  placeholder={connected ? `Message the agent in ${active.workspace.name}…` : "Connecting…"}
+                  disabled={!connected}
                 />
-                <Button
-                  size="icon"
-                  disabled={active?.connection !== "connected" || !draft.trim()}
-                  onClick={() => {
-                    if (!active) return;
-                    send(active.url, draft);
-                    setDraft("");
-                  }}
-                >
+                <Button size="icon" disabled={!connected || !draft.trim()} onClick={() => void submitChat()}>
                   <Send className="h-4 w-4" />
                 </Button>
               </div>
@@ -273,107 +343,133 @@ export function App() {
   );
 }
 
-function Header({
-  workstations,
-  feed,
-  onAdd,
-}: {
-  workstations: WorkerState[];
-  feed: FeedItem[];
-  onAdd: () => void;
-}) {
-  const online = workstations.filter((w) => w.connection === "connected").length;
-  return (
-    <header className="flex items-center justify-between border-b px-5 py-3">
-      <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <MonitorSmartphone className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold leading-tight">AI Workspace</div>
-          <div className="text-xs text-muted-foreground">
-            {online} of {workstations.length} connected
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-1">
-        <NotificationCenter items={feed} />
-        <Button size="sm" variant="outline" onClick={onAdd}>
-          <Plus className="h-3.5 w-3.5" /> Add workstation
-        </Button>
-      </div>
-    </header>
-  );
-}
-
-function WorkstationCard({
+function MachinePanel({
   url,
   state,
-  selected,
-  onSelect,
+  activeWorkspaceId,
+  onSelectWorkspace,
+  onOpen,
+  onCloseWorkspace,
   onRemove,
 }: {
   url: string;
   state?: WorkerState;
-  selected: boolean;
-  onSelect: () => void;
+  activeWorkspaceId: string | null;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onOpen: (path: string) => Promise<Workspace>;
+  onCloseWorkspace: (workspaceId: string) => void;
   onRemove: () => void;
 }) {
-  const ws: WorkspaceSummary | undefined = state?.workspaces[0];
+  const [path, setPath] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const connection = state?.connection ?? "connecting";
+  const machine = state?.machine;
+
+  const submit = async () => {
+    if (!path.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const workspace = await onOpen(path);
+      setPath("");
+      onSelectWorkspace(workspace.workspaceId);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Card
-      onClick={onSelect}
-      className={`cursor-pointer transition-colors ${selected ? "border-primary/60" : "hover:border-muted-foreground/30"}`}
-    >
+    <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm">{ws?.hostname ?? url}</CardTitle>
+        <CardTitle className="truncate text-sm">{machine?.hostname ?? url}</CardTitle>
         <div className="flex items-center gap-1">
-          <StatusBadge connection={connection} status={ws?.status} />
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6"
-            title="Remove"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-          >
+          <ConnBadge connection={connection} status={machine?.status} />
+          <Button size="icon" variant="ghost" className="h-6 w-6" title="Remove" onClick={onRemove}>
             <Trash2 className="h-3 w-3" />
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-2 text-xs text-muted-foreground">
-        <Row icon={<Bot className="h-3.5 w-3.5" />} label={ws?.agent ?? "no agent"} />
-        <Row icon={<GitBranch className="h-3.5 w-3.5" />} label={shortenPath(ws?.repo ?? null)} />
-        <Row icon={<Terminal className="h-3.5 w-3.5" />} label={url.replace("ws://", "")} />
-        {ws?.activeTask && <Row icon={<Cpu className="h-3.5 w-3.5" />} label={ws.activeTask} />}
+      <CardContent className="space-y-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Bot className="h-3.5 w-3.5" />
+          <span>{machine?.agent ?? "no agent"}</span>
+          <span className="ml-auto truncate">{url.replace("ws://", "")}</span>
+        </div>
+
+        {state?.workspaces.length ? (
+          <div className="space-y-1">
+            {state.workspaces.map((w) => (
+              <div
+                key={w.workspaceId}
+                onClick={() => onSelectWorkspace(w.workspaceId)}
+                className={`flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                  w.workspaceId === activeWorkspaceId
+                    ? "border-primary/60 bg-accent"
+                    : "hover:bg-accent/50"
+                }`}
+              >
+                <FolderOpen className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                <span className="truncate font-medium">{w.name}</span>
+                {w.branch && (
+                  <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                    <GitBranch className="h-3 w-3" />
+                    {w.branch}
+                  </span>
+                )}
+                {w.activeTask && (
+                  <Badge variant="busy" className="shrink-0 px-1.5 py-0 text-[10px]">
+                    busy
+                  </Badge>
+                )}
+                <button
+                  title="Close workspace"
+                  className="ml-auto shrink-0 opacity-40 hover:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseWorkspace(w.workspaceId);
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="py-1 text-xs text-muted-foreground">No workspaces open yet.</p>
+        )}
+
+        <div className="flex gap-1.5 pt-1">
+          <Input
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void submit()}
+            placeholder="~/code/my-project"
+            disabled={connection !== "connected" || busy}
+            className="h-7 font-mono text-[11px]"
+          />
+          <Button
+            size="sm"
+            className="h-7"
+            onClick={() => void submit()}
+            disabled={connection !== "connected" || busy || !path.trim()}
+          >
+            Open
+          </Button>
+        </div>
+        {error && <p className="text-[11px] text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );
 }
 
-function StatusBadge({
-  connection,
-  status,
-}: {
-  connection: ConnectionState;
-  status?: WorkspaceSummary["status"];
-}) {
+function ConnBadge({ connection, status }: { connection: ConnectionState; status?: string }) {
   if (connection === "unauthorized") return <Badge variant="offline">bad code</Badge>;
   if (connection !== "connected") return <Badge variant="offline">{connection}</Badge>;
   if (status === "busy") return <Badge variant="busy">busy</Badge>;
   return <Badge variant="success">online</Badge>;
-}
-
-function Row({ icon, label }: { icon: ReactNode; label: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      {icon}
-      <span className="truncate">{label}</span>
-    </div>
-  );
 }
 
 function Bubble({ role, text }: { role: "user" | "agent"; text: string }) {
@@ -384,7 +480,7 @@ function Bubble({ role, text }: { role: "user" | "agent"; text: string }) {
         className={
           isUser
             ? "max-w-[80%] rounded-lg rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground"
-            : "max-w-[80%] rounded-lg rounded-bl-sm bg-secondary px-3 py-2 text-sm text-secondary-foreground"
+            : "max-w-[80%] whitespace-pre-wrap rounded-lg rounded-bl-sm bg-secondary px-3 py-2 text-sm text-secondary-foreground"
         }
       >
         {text || <span className="opacity-50">…</span>}
@@ -441,10 +537,12 @@ function ApprovalCenter({
 function CommandRunner({
   connected,
   commands,
+  workspaceName,
   onRun,
 }: {
   connected: boolean;
   commands: CommandLine[];
+  workspaceName: string;
   onRun: (command: string) => void;
 }) {
   const [cmd, setCmd] = useState("");
@@ -456,7 +554,7 @@ function CommandRunner({
     <Card>
       <CardHeader className="flex-row items-center gap-2 space-y-0 pb-2">
         <Terminal className="h-4 w-4" />
-        <CardTitle className="text-sm">Run Command</CardTitle>
+        <CardTitle className="truncate text-sm">Run in {workspaceName}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex gap-2">
@@ -464,7 +562,7 @@ function CommandRunner({
             value={cmd}
             onChange={(e) => setCmd(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
-            placeholder="e.g. git status  ·  rm file  ·  docker ps"
+            placeholder="git status · npm test · docker ps"
             disabled={!connected}
             className="font-mono text-xs"
           />
@@ -514,7 +612,7 @@ function PairingScreen({
           <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <KeyRound className="h-5 w-5" />
           </div>
-          <CardTitle>Add a workstation</CardTitle>
+          <CardTitle>Add a machine</CardTitle>
           <p className="text-sm text-muted-foreground">
             Enter its address and the code from <code className="text-xs">aiw worker status</code>.
           </p>
@@ -546,10 +644,4 @@ function PairingScreen({
       </Card>
     </div>
   );
-}
-
-function shortenPath(p: string | null): string {
-  if (!p) return "no repo";
-  const parts = p.split("/");
-  return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : p;
 }

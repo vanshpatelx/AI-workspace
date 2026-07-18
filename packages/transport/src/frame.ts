@@ -22,6 +22,9 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
   switch (msg.type) {
     case "hello":
     case "subscribe":
+    case "workspace.open":
+    case "workspace.close":
+    case "session.create":
     case "chat.send":
     case "command.run":
     case "approval.resolve":
