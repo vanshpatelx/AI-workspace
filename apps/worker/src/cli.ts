@@ -77,9 +77,29 @@ async function cmdStart(): Promise<void> {
     return;
   }
   const worker = startWorker(config);
+
+  let shuttingDown = false;
   const shutdown = () => {
+    // A second Ctrl+C means "I'm done waiting" — exit immediately.
+    if (shuttingDown) {
+      console.log("[worker] force quit");
+      process.exit(1);
+    }
+    shuttingDown = true;
     console.log("\n[worker] shutting down");
-    void worker.stop().then(() => process.exit(0));
+
+    // Never hang: if graceful cleanup stalls (a stuck PTY, a socket that
+    // won't drain), exit anyway rather than leaving the user pressing Ctrl+C.
+    const force = setTimeout(() => {
+      console.log("[worker] cleanup timed out, exiting");
+      process.exit(1);
+    }, 3000);
+    force.unref();
+
+    void worker
+      .stop()
+      .catch(() => {})
+      .then(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

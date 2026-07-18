@@ -97,7 +97,22 @@ export class TransportServer {
     return this.conns.size;
   }
 
+  /**
+   * Stop accepting connections and drop existing ones.
+   *
+   * `wss.close()` only completes once every client socket is gone, so open
+   * Desktop connections must be terminated first — otherwise shutdown hangs
+   * forever and Ctrl+C appears to do nothing.
+   */
   close(): Promise<void> {
-    return new Promise((resolve) => this.wss.close(() => resolve()));
+    for (const socket of this.wss.clients) socket.terminate();
+    this.conns.clear();
+    return new Promise((resolve) => {
+      const done = setTimeout(resolve, 2000); // never block shutdown
+      this.wss.close(() => {
+        clearTimeout(done);
+        resolve();
+      });
+    });
   }
 }
