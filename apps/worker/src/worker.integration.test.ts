@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { WebSocket } from "ws";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { startWorker, type RunningWorker } from "./server.js";
 import type { WorkerConfig } from "./config.js";
@@ -19,6 +19,9 @@ let worker: RunningWorker;
 let projectA: string;
 let projectB: string;
 let home: string;
+let projectBase: string;
+/** Snapshot of the user's real workspace store, to prove we never touch it. */
+let realHomeBefore: string | null = null;
 
 /** Connect, optionally authenticate, and collect messages. */
 function client(token?: string) {
@@ -50,13 +53,16 @@ function client(token?: string) {
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "aiw-int-"));
-  const base = mkdtempSync(join(tmpdir(), "aiw-int-proj-"));
-  projectA = join(base, "alpha");
-  projectB = join(base, "beta");
+  projectBase = mkdtempSync(join(tmpdir(), "aiw-int-proj-"));
+  projectA = join(projectBase, "alpha");
+  projectB = join(projectBase, "beta");
   mkdirSync(projectA, { recursive: true });
   mkdirSync(projectB, { recursive: true });
   writeFileSync(join(projectA, "ALPHA.md"), "alpha\n");
   writeFileSync(join(projectB, "BETA.md"), "beta\n");
+
+  const realStore = join(homedir(), ".ai-workspace", "workspaces.json");
+  realHomeBefore = existsSync(realStore) ? readFileSync(realStore, "utf8") : null;
 
   process.env.AIW_HOME = home;
   const config: WorkerConfig = {
@@ -74,7 +80,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await worker.stop();
+  // Both must go: leaving the projects behind kept them "existing", so a
+  // registry that prunes missing directories would still list them.
   rmSync(home, { recursive: true, force: true });
+  rmSync(projectBase, { recursive: true, force: true });
   delete process.env.AIW_HOME;
 });
 
@@ -234,5 +243,21 @@ describe("commands", () => {
     const result = await c.waitFor("command.result", 6000);
     expect(result.approved).toBe(false);
     c.close();
+  });
+});
+
+describe("state isolation", () => {
+  it("writes its state inside AIW_HOME", () => {
+    expect(existsSync(join(home, "workspaces.json"))).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, "workspaces.json"), "utf8")).length).toBeGreaterThan(0);
+  });
+
+  // Regression: config paths were resolved at import time, so a Worker started
+  // after AIW_HOME was set still wrote to the user's real ~/.ai-workspace —
+  // which filled their sidebar with this test's fixture projects.
+  it("leaves the user's real workspace store untouched", () => {
+    const realStore = join(homedir(), ".ai-workspace", "workspaces.json");
+    const after = existsSync(realStore) ? readFileSync(realStore, "utf8") : null;
+    expect(after).toEqual(realHomeBefore);
   });
 });

@@ -4,11 +4,11 @@ import { join, resolve, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import type { Workspace } from "@ai-workspace/protocol";
-import { CONFIG_DIR } from "./config.js";
+import { configDir } from "./config.js";
 import { FileService } from "./files.js";
 
 const run = promisify(execFile);
-const STORE_PATH = join(CONFIG_DIR, "workspaces.json");
+
 
 /** Expand a leading ~ so users can type paths the way they do in a shell. */
 export function expandPath(input: string): string {
@@ -53,7 +53,7 @@ export class WorkspaceRegistry {
   private readonly files = new Map<string, FileService>();
 
   /** Store path is injectable so the registry can be pointed elsewhere. */
-  constructor(private storePath: string = STORE_PATH) {
+  constructor(private storePath: string = join(configDir(), "workspaces.json")) {
     this.load();
   }
 

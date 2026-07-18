@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import { CONFIG_DIR } from "./config.js";
+import { configDir } from "./config.js";
 
 const run = promisify(execFile);
 
@@ -20,7 +20,7 @@ function plistPath(): string {
 }
 
 function logDir(): string {
-  return join(CONFIG_DIR, "logs");
+  return join(configDir(), "logs");
 }
 
 function escapeXml(value: string): string {
@@ -53,7 +53,7 @@ ${args.map((a) => `    <string>${escapeXml(a)}</string>`).join("\n")}
   <key>EnvironmentVariables</key>
   <dict>
     <key>AIW_HOME</key>
-    <string>${escapeXml(CONFIG_DIR)}</string>
+    <string>${escapeXml(configDir())}</string>
     <key>PATH</key>
     <string>${escapeXml(process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin")}</string>
   </dict>

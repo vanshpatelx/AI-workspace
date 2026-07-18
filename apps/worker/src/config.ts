@@ -21,31 +21,40 @@ export interface WorkerConfig {
 /**
  * All Worker state lives under one directory. `AIW_HOME` overrides it, which
  * lets several Workers run on one machine with independent configs and
- * sessions (used for multi-machine testing).
+ * sessions.
+ *
+ * Resolved per call rather than at import: a module-level constant is fixed
+ * before anything can set AIW_HOME, which silently sent state to the real
+ * home directory instead of the intended one.
  */
-export const CONFIG_DIR = process.env.AIW_HOME ?? join(homedir(), ".ai-workspace");
-const CONFIG_PATH = join(CONFIG_DIR, "worker.json");
+export function configDir(): string {
+  return process.env.AIW_HOME ?? join(homedir(), ".ai-workspace");
+}
+
+function configFile(): string {
+  return join(configDir(), "worker.json");
+}
 
 export function configPath(): string {
-  return CONFIG_PATH;
+  return configFile();
 }
 
 export function configExists(): boolean {
-  return existsSync(CONFIG_PATH);
+  return existsSync(configFile());
 }
 
 export function loadConfig(): WorkerConfig | null {
-  if (!existsSync(CONFIG_PATH)) return null;
+  if (!existsSync(configFile())) return null;
   try {
-    return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as WorkerConfig;
+    return JSON.parse(readFileSync(configFile(), "utf8")) as WorkerConfig;
   } catch {
     return null;
   }
 }
 
 export function saveConfig(config: WorkerConfig): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", "utf8");
+  mkdirSync(configDir(), { recursive: true });
+  writeFileSync(configFile(), JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
 /** Short human-friendly pairing code, e.g. "AIW-4F9K-2Q7X". */

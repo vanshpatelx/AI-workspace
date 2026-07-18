@@ -37,6 +37,7 @@ import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
 import { UsageBar } from "./components/UsageBar.js";
 import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
+import { LiveActivity } from "./components/LiveActivity.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
@@ -159,6 +160,13 @@ export function App() {
   }
 
   const connected = active?.worker.connection === "connected";
+  // The Worker reports per-workspace activity; pair it with the last tool the
+  // agent reached for, so the footer says something concrete.
+  const isWorking = Boolean(active?.workspace.activeTask);
+  const lastTool = [...messages].reverse().find((m) => m.role === "tool");
+  const activityLabel = lastTool?.tool
+    ? `${lastTool.tool}${lastTool.target ? ` · ${lastTool.target.split("/").pop()}` : ""}`
+    : (active?.workspace.activeTask ?? "working");
 
   const submitChat = async () => {
     if (!active || !draft.trim()) return;
@@ -341,7 +349,12 @@ export function App() {
                   </p>
                 ) : (
                   messages.map((m, i) => (
-                    <Turn key={i} message={m} streaming={i === messages.length - 1} />
+                    <Turn
+                      key={i}
+                      message={m}
+                      streaming={i === messages.length - 1 && isWorking}
+                      activity={activityLabel}
+                    />
                   ))
                 )}
               </div>
@@ -514,7 +527,15 @@ function ConnBadge({ connection, status }: { connection: ConnectionState; status
  * a bubble — they routinely contain tables and code, which a narrow bubble
  * mangles. The user's own messages stay compact and visually distinct.
  */
-function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean }) {
+function Turn({
+  message,
+  streaming,
+  activity,
+}: {
+  message: ChatMessage;
+  streaming: boolean;
+  activity?: string;
+}) {
   if (message.role === "reasoning") {
     return (
       <Reasoning className="my-1.5" isStreaming={streaming && !message.text}>
@@ -546,12 +567,8 @@ function Turn({ message, streaming }: { message: ChatMessage; streaming: boolean
   }
 
   if (!message.text) {
-    return streaming ? (
-      <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-        thinking…
-      </div>
-    ) : null;
+    // An empty trailing agent turn means the round is still open.
+    return streaming ? <LiveActivity what={activity ?? "working"} /> : null;
   }
 
   return (
