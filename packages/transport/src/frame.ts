@@ -23,6 +23,7 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
     case "hello":
     case "subscribe":
     case "chat.send":
+    case "command.run":
     case "approval.resolve":
     case "terminal.input":
       return true;

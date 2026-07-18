@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Cpu, GitBranch, MonitorSmartphone, Send, Bot, Wifi, WifiOff } from "lucide-react";
-import type { WorkspaceSummary } from "@ai-workspace/protocol";
-import { useWorker, type ConnectionState } from "./lib/useWorker.js";
+import {
+  Cpu,
+  GitBranch,
+  MonitorSmartphone,
+  Send,
+  Bot,
+  Wifi,
+  WifiOff,
+  ShieldAlert,
+  Check,
+  X,
+  Terminal,
+} from "lucide-react";
+import type { ApprovalRequest, WorkspaceSummary } from "@ai-workspace/protocol";
+import { useWorker, type CommandLine, type ConnectionState } from "./lib/useWorker.js";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card.js";
 import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
@@ -10,7 +22,8 @@ import { Input } from "./components/ui/input.js";
 const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 
 export function App() {
-  const { connection, workspaces, messages, notices, send } = useWorker(WORKER_URL);
+  const { connection, workspaces, messages, approvals, commands, notices, send, runCommand, resolveApproval } =
+    useWorker(WORKER_URL);
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -35,6 +48,15 @@ export function App() {
           ) : (
             workspaces.map((w) => <WorkspaceCard key={w.workerId} w={w} />)
           )}
+
+          <ApprovalCenter approvals={approvals} onResolve={resolveApproval} />
+
+          <CommandRunner
+            connected={connection === "connected"}
+            commands={commands}
+            onRun={runCommand}
+          />
+
           {notices.length > 0 && (
             <Card className="border-destructive/40">
               <CardHeader className="pb-2">
@@ -174,6 +196,107 @@ function EmptyState({ connection }: { connection: ConnectionState }) {
       </CardContent>
     </Card>
   );
+}
+
+function ApprovalCenter({
+  approvals,
+  onResolve,
+}: {
+  approvals: ApprovalRequest[];
+  onResolve: (id: string, approved: boolean) => void;
+}) {
+  if (approvals.length === 0) return null;
+  return (
+    <Card className="border-amber-500/40">
+      <CardHeader className="flex-row items-center gap-2 space-y-0 pb-2">
+        <ShieldAlert className="h-4 w-4 text-amber-400" />
+        <CardTitle className="text-sm">Approval Center</CardTitle>
+        <Badge variant="busy" className="ml-auto">
+          {approvals.length} pending
+        </Badge>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {approvals.map((a) => (
+          <div key={a.id} className="rounded-md border bg-background p-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline">{a.kind}</Badge>
+              <span className="text-sm font-medium">{a.summary}</span>
+            </div>
+            <pre className="mt-2 overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs text-muted-foreground">
+              {a.details}
+            </pre>
+            <div className="mt-2 flex gap-2">
+              <Button size="sm" onClick={() => onResolve(a.id, true)}>
+                <Check className="h-3.5 w-3.5" /> Approve
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => onResolve(a.id, false)}>
+                <X className="h-3.5 w-3.5" /> Reject
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CommandRunner({
+  connected,
+  commands,
+  onRun,
+}: {
+  connected: boolean;
+  commands: CommandLine[];
+  onRun: (command: string) => void;
+}) {
+  const [cmd, setCmd] = useState("");
+  const submit = () => {
+    onRun(cmd);
+    setCmd("");
+  };
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center gap-2 space-y-0 pb-2">
+        <Terminal className="h-4 w-4" />
+        <CardTitle className="text-sm">Run Command</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex gap-2">
+          <Input
+            value={cmd}
+            onChange={(e) => setCmd(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder="e.g. git status  ·  rm file  ·  docker ps"
+            disabled={!connected}
+            className="font-mono text-xs"
+          />
+          <Button size="sm" onClick={submit} disabled={!connected || !cmd.trim()}>
+            Run
+          </Button>
+        </div>
+        {commands.map((c) => (
+          <div key={c.commandId} className="rounded-md border bg-background p-2">
+            <div className="flex items-center gap-2">
+              <CmdStatus status={c.status} />
+              <code className="truncate text-xs">{c.command}</code>
+            </div>
+            {c.output && (
+              <pre className="mt-1.5 max-h-32 overflow-auto rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                {c.output}
+              </pre>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CmdStatus({ status }: { status: CommandLine["status"] }) {
+  if (status === "pending") return <Badge variant="busy">awaiting approval</Badge>;
+  if (status === "rejected") return <Badge variant="offline">rejected</Badge>;
+  if (status === "done") return <Badge variant="success">ran</Badge>;
+  return <Badge variant="outline">{status}</Badge>;
 }
 
 function shortenPath(p: string | null): string {

@@ -1,10 +1,12 @@
 import { hostname } from "node:os";
+import { exec } from "node:child_process";
 import { PROTOCOL_VERSION, type AgentKind, type WorkspaceSummary } from "@ai-workspace/protocol";
 import { TransportServer, type TransportConnection } from "@ai-workspace/transport";
 import type { WorkerConfig } from "./config.js";
 import { KeepAwake } from "./keepawake.js";
 import { agentLabel } from "./agents.js";
 import { SessionStore } from "./session.js";
+import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import type { AgentAdapter } from "./adapters/types.js";
 
@@ -31,6 +33,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   keepAwake.start();
 
   const sessions = new SessionStore();
+  const approvals = new ApprovalManager();
   const adapters = buildAdapters(config);
   const defaultAgent: AgentKind | null = config.agents[0] ?? null;
 
@@ -89,12 +92,67 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     }
   }
 
+  async function runShell(command: string, cwd: string): Promise<{ code: number | null; output: string }> {
+    return new Promise((resolve) => {
+      exec(command, { cwd, timeout: 60_000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        const output = (stdout + stderr).trim();
+        const code = err && typeof (err as { code?: number }).code === "number" ? (err as { code: number }).code : err ? 1 : 0;
+        resolve({ code, output });
+      });
+    });
+  }
+
+  async function handleCommand(conn: TransportConnection, commandId: string, command: string): Promise<void> {
+    const sensitive = classifyCommand(command);
+
+    if (sensitive) {
+      const { request, decision } = approvals.create(
+        config.workerId,
+        sensitive.kind,
+        sensitive.summary,
+        command,
+        Date.now(),
+      );
+      // Broadcast so any connected Desktop can approve.
+      server.broadcast({ type: "approval.request", request });
+      console.log(`[worker] approval required (${sensitive.kind}): ${command}`);
+
+      const approved = await decision;
+      server.broadcast({ type: "approval.resolved", requestId: request.id, approved });
+
+      if (!approved) {
+        conn.send({
+          type: "command.result",
+          commandId,
+          code: null,
+          output: `Rejected by user: ${sensitive.summary.toLowerCase()}`,
+          approved: false,
+        });
+        return;
+      }
+    }
+
+    activeTasks++;
+    keepAwake.taskStarted();
+    server.broadcast({ type: "workspaces", items: [describeSelf()] });
+    try {
+      const { code, output } = await runShell(command, process.cwd());
+      conn.send({ type: "command.result", commandId, code, output, approved: true });
+    } finally {
+      activeTasks = Math.max(0, activeTasks - 1);
+      keepAwake.taskEnded();
+      server.broadcast({ type: "workspaces", items: [describeSelf()] });
+    }
+  }
+
   server = new TransportServer(
     { port: config.port },
     {
       onConnect(conn) {
         console.log(`[worker] client ${conn.id} connected`);
         conn.send({ type: "workspaces", items: [describeSelf()] });
+        // Re-advertise any approvals still waiting for a decision.
+        for (const request of approvals.list()) conn.send({ type: "approval.request", request });
       },
       onMessage(conn, msg) {
         switch (msg.type) {
@@ -107,6 +165,15 @@ export function startWorker(config: WorkerConfig): RunningWorker {
           case "chat.send":
             console.log(`[worker] chat(${msg.sessionId}): ${msg.text.slice(0, 60)}`);
             void handleChat(conn, msg.sessionId, msg.text);
+            break;
+          case "command.run":
+            console.log(`[worker] command(${msg.commandId}): ${msg.command.slice(0, 80)}`);
+            void handleCommand(conn, msg.commandId, msg.command);
+            break;
+          case "approval.resolve":
+            if (!approvals.resolve(msg.requestId, msg.approved)) {
+              console.log(`[worker] approval ${msg.requestId} already resolved/unknown`);
+            }
             break;
           default:
             break;
@@ -129,6 +196,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   return {
     async stop() {
+      approvals.rejectAll();
       keepAwake.stop();
       await server.close();
     },

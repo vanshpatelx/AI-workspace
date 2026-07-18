@@ -47,6 +47,7 @@ export type ClientMessage =
   | { type: "hello"; clientId: string }
   | { type: "subscribe"; workerId: string }
   | { type: "chat.send"; sessionId: string; text: string }
+  | { type: "command.run"; commandId: string; command: string }
   | { type: "approval.resolve"; requestId: string; approved: boolean }
   | { type: "terminal.input"; sessionId: string; data: string };
 
@@ -55,6 +56,8 @@ export type ServerMessage =
   | { type: "workspaces"; items: WorkspaceSummary[] }
   | { type: "chat.delta"; sessionId: string; text: string }
   | { type: "approval.request"; request: ApprovalRequest }
+  | { type: "approval.resolved"; requestId: string; approved: boolean }
+  | { type: "command.result"; commandId: string; code: number | null; output: string; approved: boolean }
   | { type: "terminal.output"; sessionId: string; data: string }
   | { type: "notification"; level: "info" | "warn" | "error"; text: string };
 

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, ServerMessage, WorkspaceSummary } from "@ai-workspace/protocol";
+import type {
+  ApprovalRequest,
+  ClientMessage,
+  ServerMessage,
+  WorkspaceSummary,
+} from "@ai-workspace/protocol";
 
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 
@@ -8,15 +13,29 @@ export interface ChatMessage {
   text: string;
 }
 
+export interface CommandLine {
+  commandId: string;
+  command: string;
+  status: "pending" | "approved" | "rejected" | "done";
+  code?: number | null;
+  output?: string;
+}
+
 export interface WorkerState {
   connection: ConnectionState;
   workspaces: WorkspaceSummary[];
   messages: ChatMessage[];
+  approvals: ApprovalRequest[];
+  commands: CommandLine[];
   notices: string[];
   send: (text: string) => void;
+  runCommand: (command: string) => void;
+  resolveApproval: (requestId: string, approved: boolean) => void;
 }
 
 const SESSION_ID = "desktop-main";
+
+let commandCounter = 0;
 
 /**
  * Connects the renderer to a Worker over a native WebSocket and exposes live
@@ -27,6 +46,8 @@ export function useWorker(url: string): WorkerState {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [commands, setCommands] = useState<CommandLine[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -64,6 +85,28 @@ export function useWorker(url: string): WorkerState {
           case "chat.delta":
             setMessages((prev) => appendAgentDelta(prev, msg.text));
             break;
+          case "approval.request":
+            setApprovals((prev) =>
+              prev.some((a) => a.id === msg.request.id) ? prev : [msg.request, ...prev],
+            );
+            break;
+          case "approval.resolved":
+            setApprovals((prev) => prev.filter((a) => a.id !== msg.requestId));
+            break;
+          case "command.result":
+            setCommands((prev) =>
+              prev.map((c) =>
+                c.commandId === msg.commandId
+                  ? {
+                      ...c,
+                      status: msg.approved ? "done" : "rejected",
+                      code: msg.code,
+                      output: msg.output,
+                    }
+                  : c,
+              ),
+            );
+            break;
           case "notification":
             setNotices((prev) => [`${msg.level}: ${msg.text}`, ...prev].slice(0, 20));
             break;
@@ -97,7 +140,27 @@ export function useWorker(url: string): WorkerState {
     [emit],
   );
 
-  return { connection, workspaces, messages, notices, send };
+  const runCommand = useCallback(
+    (command: string) => {
+      const trimmed = command.trim();
+      if (!trimmed) return;
+      const commandId = `cmd-${++commandCounter}`;
+      const line: CommandLine = { commandId, command: trimmed, status: "pending" };
+      setCommands((prev) => [line, ...prev].slice(0, 20));
+      emit({ type: "command.run", commandId, command: trimmed });
+    },
+    [emit],
+  );
+
+  const resolveApproval = useCallback(
+    (requestId: string, approved: boolean) => {
+      setApprovals((prev) => prev.filter((a) => a.id !== requestId));
+      emit({ type: "approval.resolve", requestId, approved });
+    },
+    [emit],
+  );
+
+  return { connection, workspaces, messages, approvals, commands, notices, send, runCommand, resolveApproval };
 }
 
 /** Append streamed agent text to the last (in-progress) agent message. */

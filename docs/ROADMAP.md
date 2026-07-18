@@ -21,7 +21,7 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 | 7 | Session store to disk (persistent chat) | 🚧 | in-memory session→native-id map done; disk persistence pending |
 | 8 | Desktop UI: React + Tailwind + shadcn-style | ✅ | dashboard + persistent chat, live WebSocket to Worker (Electron shell = D3) |
 | 9 | Pairing / auth (Desktop trusts a Worker) | ⬜ | use the pairing code minted at init; key exchange |
-| 10 | Approval Center (git push / rm / docker gating) | ⬜ | high-trust feature; end-to-end approve/reject |
+| 10 | Approval Center (git push / rm / docker gating) | ✅ | command runner + classifier; sensitive actions gated, approve/reject in UI, verified (reject blocks, approve runs) |
 | 11 | Terminal streaming | ⬜ | interactive PTY over the transport |
 | 12 | Localhost preview (detect dev servers) | ⬜ | Next.js/Vite/Rails/Django tunneled into Desktop |
 | 13 | File explorer + media preview | ⬜ | browse repo, preview images/video/PDF/markdown |
