@@ -31,6 +31,13 @@ jobs:
       - name: Build all packages
         run: pnpm -r build
 
+      # electron-builder names artifacts from package.json, so without this the
+      # DMG ships as 0.0.0 no matter which tag produced it.
+      - name: Stamp version from the tag
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          npm --prefix apps/desktop version --no-git-tag-version --allow-same-version "${VERSION#v}"
+
       - name: Build macOS DMG (arm64 + x64)
         working-directory: apps/desktop
         env:
