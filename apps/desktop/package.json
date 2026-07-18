@@ -3,15 +3,30 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "connect": "tsx src/connect.ts",
     "build": "vite build",
     "preview": "vite preview",
+    "electron": "electron .",
+    "electron:dev": "electron .",
+    "dist:mac": "electron-builder --mac dmg",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rm -rf dist release *.tsbuildinfo"
   },
-  "dependencies": {
+  "build": {
+    "appId": "dev.aiworkspace.desktop",
+    "productName": "AI Workspace",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }]
+    },
+    "dmg": { "title": "AI Workspace" }
+  },
+  "devDependencies": {
     "@ai-workspace/protocol": "workspace:*",
     "@ai-workspace/transport": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
@@ -21,13 +36,13 @@
     "lucide-react": "^0.454.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tailwind-merge": "^2.5.4"
-  },
-  "devDependencies": {
+    "tailwind-merge": "^2.5.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.0",

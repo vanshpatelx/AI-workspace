@@ -38,6 +38,19 @@ aiw ui               # serve the Desktop UI at http://127.0.0.1:5180
 
 Pair the UI with the code from `aiw worker status`. Requires Node 20+ and git.
 
+### Desktop app
+
+Download the `.dmg` from [Releases](https://github.com/vanshpatelx/AI-workspace/releases)
+and drag it to Applications. The build is unsigned, so on first launch
+right-click the app and choose **Open**.
+
+To build it yourself:
+
+```bash
+pnpm -r build
+pnpm --filter @ai-workspace/desktop dist:mac   # -> apps/desktop/release/*.dmg
+```
+
 ## Run it (dev)
 
 ```bash

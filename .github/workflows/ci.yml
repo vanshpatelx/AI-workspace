@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Typecheck & build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Workspace packages resolve their types from dist/, so they must be
+      # built before anything that depends on them can typecheck.
+      - name: Build shared packages
+        run: pnpm build:packages
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Verify build output
+        run: |
+          test -f apps/worker/dist/cli.js || { echo "missing CLI entry"; exit 1; }
+          # The PreToolUse hook must ship next to the built CLI, otherwise agent
+          # approvals silently break in an installed copy.
+          test -f apps/worker/dist/permission-hook.mjs || { echo "missing permission hook"; exit 1; }
+          test -f apps/desktop/dist/index.html || { echo "missing renderer"; exit 1; }
+          node apps/worker/dist/cli.js help > /dev/null
+
+  install-script:
+    name: install.sh on a clean machine
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Runs the real installer against this commit, on a runner that has never
+      # seen the project — this is what catches "works on my machine" breakage.
+      - name: Run installer
+        env:
+          AIW_REPO: ${{ github.server_url }}/${{ github.repository }}.git
+          AIW_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: bash install.sh
+
+      - name: Smoke test the installed CLI
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          aiw help
+          aiw worker init --yes --port 4501
+          aiw worker status | tee /tmp/status.txt
+          grep -q "Worker: configured" /tmp/status.txt
+
+      - name: Worker starts and serves the UI
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          aiw worker start > /tmp/worker.log 2>&1 &
+          aiw ui > /tmp/ui.log 2>&1 &
+          sleep 6
+          grep -q "listening on ws://" /tmp/worker.log
+          curl -fsS http://127.0.0.1:5180/ | grep -q "<title>AI Workspace</title>"
+          cat /tmp/worker.log

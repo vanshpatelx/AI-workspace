@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build DMG + CLI bundle
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm -r build
+
+      - name: Build macOS DMG (arm64 + x64)
+        working-directory: apps/desktop
+        env:
+          # Unsigned build: no Developer ID certificate is configured yet, so
+          # users will need to right-click > Open on first launch.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm exec electron-builder --mac dmg --arm64 --x64
+
+      - name: Package the CLI
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          STAGE="$(mktemp -d)/aiw-cli-${VERSION}"
+          mkdir -p "$STAGE"
+          # Ship sources + build output; the install script builds from these.
+          cp -R apps packages package.json pnpm-workspace.yaml pnpm-lock.yaml \
+                tsconfig.base.json install.sh README.md LICENSE "$STAGE"/
+          # Drop dependencies and build output — the installer builds from
+          # source, and leaving these in ballooned the tarball to 200 MB+.
+          find "$STAGE" \( -name node_modules -o -name dist -o -name release \) \
+               -type d -prune -exec rm -rf {} +
+          mkdir -p dist-artifacts
+          tar -czf "dist-artifacts/aiw-cli-${VERSION}.tar.gz" -C "$(dirname "$STAGE")" "aiw-cli-${VERSION}"
+
+      - name: Collect artifacts + checksums
+        run: |
+          mkdir -p dist-artifacts
+          cp apps/desktop/release/*.dmg dist-artifacts/ 2>/dev/null || true
+          cd dist-artifacts
+          shasum -a 256 * > SHA256SUMS.txt
+          ls -lh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist-artifacts/*
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/*
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            **Worker (CLI)** — installs on each machine you want to reach:
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+            aiw worker init
+            aiw worker start
+            ```
+
+            **Desktop app** — download the `.dmg` below and drag it to Applications.
+
+            > The DMG is unsigned, so macOS Gatekeeper will block the first launch.
+            > Right-click the app and choose **Open** to run it.
