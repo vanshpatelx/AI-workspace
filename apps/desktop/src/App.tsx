@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card.j
 import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Input } from "./components/ui/input.js";
+import { TerminalPanel } from "./components/TerminalPanel.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -45,9 +46,10 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
+  const [tab, setTab] = useState<"chat" | "terminal">("chat");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { workers, send, runCommand, resolveApproval } = useWorkers(targets);
+  const { workers, send, runCommand, resolveApproval, terminal } = useWorkers(targets);
 
   const active: WorkerState | null = useMemo(() => {
     const url = selected && workers[selected] ? selected : targets[0]?.url;
@@ -128,50 +130,80 @@ export function App() {
         </section>
 
         <Card className="flex min-h-0 flex-col">
-          <CardHeader className="border-b py-3">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Bot className="h-4 w-4" /> Persistent Chat
-              {active && (
-                <span className="ml-auto text-xs font-normal text-muted-foreground">
-                  {active.workspaces[0]?.hostname ?? active.url}
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-            {!active || active.messages.length === 0 ? (
-              <p className="mt-8 text-center text-sm text-muted-foreground">
-                Send a message to the agent on this workstation.
-              </p>
-            ) : (
-              active.messages.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)
-            )}
-          </div>
-          <div className="flex items-center gap-2 border-t p-3">
-            <Input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && active) {
-                  send(active.url, draft);
-                  setDraft("");
-                }
-              }}
-              placeholder={active?.connection === "connected" ? "Message the agent…" : "Connecting…"}
-              disabled={active?.connection !== "connected"}
-            />
+          <CardHeader className="flex-row items-center gap-1 space-y-0 border-b py-2">
             <Button
-              size="icon"
-              disabled={active?.connection !== "connected" || !draft.trim()}
-              onClick={() => {
-                if (!active) return;
-                send(active.url, draft);
-                setDraft("");
-              }}
+              size="sm"
+              variant={tab === "chat" ? "secondary" : "ghost"}
+              onClick={() => setTab("chat")}
             >
-              <Send className="h-4 w-4" />
+              <Bot className="h-3.5 w-3.5" /> Chat
             </Button>
-          </div>
+            <Button
+              size="sm"
+              variant={tab === "terminal" ? "secondary" : "ghost"}
+              onClick={() => setTab("terminal")}
+            >
+              <Terminal className="h-3.5 w-3.5" /> Terminal
+            </Button>
+            {active && (
+              <span className="ml-auto text-xs text-muted-foreground">
+                {active.workspaces[0]?.hostname ?? active.url}
+              </span>
+            )}
+          </CardHeader>
+
+          {tab === "terminal" ? (
+            <div className="min-h-0 flex-1 bg-[#0a0a0b] p-2">
+              {active && (
+                <TerminalPanel
+                  key={active.url}
+                  url={active.url}
+                  terminalId="main"
+                  terminal={terminal}
+                  connected={active.connection === "connected"}
+                />
+              )}
+            </div>
+          ) : (
+            <>
+              <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+                {!active || active.messages.length === 0 ? (
+                  <p className="mt-8 text-center text-sm text-muted-foreground">
+                    Send a message to the agent on this workstation.
+                  </p>
+                ) : (
+                  active.messages.map((m, i) => <Bubble key={i} role={m.role} text={m.text} />)
+                )}
+              </div>
+              <div className="flex items-center gap-2 border-t p-3">
+                <Input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && active) {
+                      send(active.url, draft);
+                      setDraft("");
+                    }
+                  }}
+                  placeholder={
+                    active?.connection === "connected" ? "Message the agent…" : "Connecting…"
+                  }
+                  disabled={active?.connection !== "connected"}
+                />
+                <Button
+                  size="icon"
+                  disabled={active?.connection !== "connected" || !draft.trim()}
+                  onClick={() => {
+                    if (!active) return;
+                    send(active.url, draft);
+                    setDraft("");
+                  }}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            </>
+          )}
         </Card>
       </div>
     </div>

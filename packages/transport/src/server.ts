@@ -60,7 +60,12 @@ export class TransportServer {
         return;
       }
       if (isClientMessage(msg)) {
-        this.handlers.onMessage?.(conn, msg);
+        // A handler that throws must not tear down the whole Worker process.
+        try {
+          this.handlers.onMessage?.(conn, msg);
+        } catch (err) {
+          this.handlers.onError?.(err as Error);
+        }
       }
     });
 

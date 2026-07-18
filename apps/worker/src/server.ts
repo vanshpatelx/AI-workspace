@@ -8,6 +8,7 @@ import { KeepAwake } from "./keepawake.js";
 import { agentLabel } from "./agents.js";
 import { SessionStore } from "./session.js";
 import { ApprovalManager, classifyCommand } from "./approvals.js";
+import { TerminalManager } from "./terminals.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import type { AgentAdapter } from "./adapters/types.js";
 
@@ -41,6 +42,11 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   // A connection sees no state and can take no action until it authenticates
   // with the Worker's pairing code.
   const authed = new Set<string>();
+
+  const terminals = new TerminalManager(process.cwd(), {
+    onData: (terminalId, data) => server.broadcast({ type: "terminal.output", terminalId, data }),
+    onExit: (terminalId, code) => server.broadcast({ type: "terminal.exit", terminalId, code }),
+  });
 
   let activeTasks = 0;
 
@@ -256,6 +262,26 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               console.log(`[worker] approval ${msg.requestId} already resolved/unknown`);
             }
             break;
+          case "terminal.start": {
+            const err = terminals.start(msg.terminalId, msg.cols, msg.rows);
+            if (err) {
+              console.error(`[worker] ${err}`);
+              conn.send({ type: "notification", level: "error", text: err });
+              conn.send({ type: "terminal.exit", terminalId: msg.terminalId, code: null });
+            } else {
+              console.log(`[worker] terminal ${msg.terminalId} started`);
+            }
+            break;
+          }
+          case "terminal.input":
+            terminals.write(msg.terminalId, msg.data);
+            break;
+          case "terminal.resize":
+            terminals.resize(msg.terminalId, msg.cols, msg.rows);
+            break;
+          case "terminal.close":
+            terminals.close(msg.terminalId);
+            break;
           default:
             break;
         }
@@ -281,6 +307,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   return {
     async stop() {
       approvals.rejectAll();
+      terminals.closeAll();
       keepAwake.stop();
       approvalHttp.close();
       await server.close();

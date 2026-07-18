@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/cli.ts worker start",
+    "postinstall": "node scripts/fix-node-pty.mjs",
     "cli": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json && cp src/permission-hook.mjs dist/permission-hook.mjs && chmod +x dist/cli.js",
     "start": "node dist/cli.js worker start",
@@ -16,7 +17,8 @@
   },
   "dependencies": {
     "@ai-workspace/protocol": "workspace:*",
-    "@ai-workspace/transport": "workspace:*"
+    "@ai-workspace/transport": "workspace:*",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

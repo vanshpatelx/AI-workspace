@@ -56,7 +56,10 @@ export type ClientMessage =
   | { type: "chat.send"; sessionId: string; text: string }
   | { type: "command.run"; commandId: string; command: string }
   | { type: "approval.resolve"; requestId: string; approved: boolean }
-  | { type: "terminal.input"; sessionId: string; data: string };
+  | { type: "terminal.start"; terminalId: string; cols: number; rows: number }
+  | { type: "terminal.input"; terminalId: string; data: string }
+  | { type: "terminal.resize"; terminalId: string; cols: number; rows: number }
+  | { type: "terminal.close"; terminalId: string };
 
 /** Worker -> Desktop */
 export type ServerMessage =
@@ -67,7 +70,8 @@ export type ServerMessage =
   | { type: "approval.request"; request: ApprovalRequest }
   | { type: "approval.resolved"; requestId: string; approved: boolean }
   | { type: "command.result"; commandId: string; code: number | null; output: string; approved: boolean }
-  | { type: "terminal.output"; sessionId: string; data: string }
+  | { type: "terminal.output"; terminalId: string; data: string }
+  | { type: "terminal.exit"; terminalId: string; code: number | null }
   | { type: "notification"; level: "info" | "warn" | "error"; text: string };
 
 export type WireMessage = ClientMessage | ServerMessage;

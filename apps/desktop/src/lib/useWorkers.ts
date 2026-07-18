@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalRequest,
   ClientMessage,
@@ -38,11 +38,21 @@ export interface WorkerState {
   notices: string[];
 }
 
+/** Streamed PTY bytes, delivered outside React state to keep xterm fast. */
+export type TerminalListener = (terminalId: string, data: string) => void;
+
 export interface WorkersApi {
   workers: Record<string, WorkerState>;
   send: (url: string, text: string) => void;
   runCommand: (url: string, command: string) => void;
   resolveApproval: (url: string, requestId: string, approved: boolean) => void;
+  terminal: {
+    start: (url: string, terminalId: string, cols: number, rows: number) => void;
+    input: (url: string, terminalId: string, data: string) => void;
+    resize: (url: string, terminalId: string, cols: number, rows: number) => void;
+    close: (url: string, terminalId: string) => void;
+    subscribe: (listener: TerminalListener) => () => void;
+  };
 }
 
 const SESSION_ID = "desktop-main";
@@ -71,6 +81,7 @@ function emptyState(url: string): WorkerState {
 export function useWorkers(targets: WorkerTarget[]): WorkersApi {
   const [workers, setWorkers] = useState<Record<string, WorkerState>>({});
   const socketsRef = useRef<Map<string, WebSocket>>(new Map());
+  const termListeners = useRef<Set<TerminalListener>>(new Set());
   const key = targets.map((t) => `${t.url}|${t.token}`).join(",");
 
   const patch = useCallback((url: string, fn: (prev: WorkerState) => WorkerState) => {
@@ -179,6 +190,14 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                 ),
               }));
               break;
+            case "terminal.output":
+              // Bypasses React state: PTY output is high-frequency and goes
+              // straight to xterm's write buffer.
+              for (const l of termListeners.current) l(msg.terminalId, msg.data);
+              break;
+            case "terminal.exit":
+              for (const l of termListeners.current) l(msg.terminalId, "\r\n[process exited]\r\n");
+              break;
             case "notification":
               patch(target.url, (s) => ({
                 ...s,
@@ -250,7 +269,26 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [emit, patch],
   );
 
-  return { workers, send, runCommand, resolveApproval };
+  const terminal = useMemo(
+    () => ({
+      start: (url: string, terminalId: string, cols: number, rows: number) =>
+        emit(url, { type: "terminal.start", terminalId, cols, rows }),
+      input: (url: string, terminalId: string, data: string) =>
+        emit(url, { type: "terminal.input", terminalId, data }),
+      resize: (url: string, terminalId: string, cols: number, rows: number) =>
+        emit(url, { type: "terminal.resize", terminalId, cols, rows }),
+      close: (url: string, terminalId: string) => emit(url, { type: "terminal.close", terminalId }),
+      subscribe: (listener: TerminalListener) => {
+        termListeners.current.add(listener);
+        return () => {
+          termListeners.current.delete(listener);
+        };
+      },
+    }),
+    [emit],
+  );
+
+  return { workers, send, runCommand, resolveApproval, terminal };
 }
 
 /** Append streamed agent text to the last (in-progress) agent message. */
