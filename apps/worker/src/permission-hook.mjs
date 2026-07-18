@@ -47,9 +47,16 @@ try {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   const url = `http://127.0.0.1:${config.port + 1}/approval`;
 
+  // Inherited from the Worker that spawned the agent; proves this request came
+  // from the hook rather than some other process on the machine.
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      // argv wins: the agent that spawns this hook does not reliably forward
+      // environment variables, so the Worker passes the token explicitly.
+      "x-aiw-token": process.argv[2] ?? process.env.AIW_HOOK_TOKEN ?? "",
+    },
     body: JSON.stringify({ toolName, command }),
   });
   const { approved, reason } = await res.json();

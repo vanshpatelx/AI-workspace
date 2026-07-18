@@ -7,17 +7,32 @@ import type { AgentAdapter, AgentTurnInput, AgentTurnResult } from "./types.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = join(HERE, "..", "permission-hook.mjs");
 
+/** The agent reports an unresolvable --resume target with this message. */
+function isMissingSession(text: string): boolean {
+  return /No conversation found with session ID/i.test(text);
+}
+
 /**
  * Inline settings that route every Bash tool call through our PreToolUse hook,
  * so the agent's own dangerous actions land in the Approval Center.
+ *
+ * The approval token is passed as an argument rather than inherited from the
+ * environment: the hook is spawned by the agent process, not by us, and the
+ * agent does not forward arbitrary env vars to hook commands.
  */
 function hookSettings(): string {
+  const token = process.env.AIW_HOOK_TOKEN ?? "";
   return JSON.stringify({
     hooks: {
       PreToolUse: [
         {
           matcher: "Bash",
-          hooks: [{ type: "command", command: `node ${JSON.stringify(HOOK_PATH)}` }],
+          hooks: [
+            {
+              type: "command",
+              command: `node ${JSON.stringify(HOOK_PATH)} ${JSON.stringify(token)}`,
+            },
+          ],
         },
       ],
     },
@@ -38,8 +53,27 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   constructor(private binary = "claude") {}
 
-  runTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
-    const { text, cwd, resumeSessionId, handlers } = input;
+  /**
+   * Agent sessions are scoped to the directory they were created in, so a
+   * stored session id stops resolving if the Worker is started from a
+   * different folder. Rather than failing the turn silently, fall back to a
+   * fresh agent session — our own transcript is the durable record.
+   */
+  async runTurn(input: AgentTurnInput): Promise<AgentTurnResult> {
+    if (input.resumeSessionId) {
+      const attempt = await this.attempt(input, input.resumeSessionId);
+      if (!attempt.resumeFailed) return { nativeSessionId: attempt.nativeSessionId };
+      input.handlers.onNotice?.("(previous agent session unavailable — starting a new one)");
+    }
+    const fresh = await this.attempt(input, null);
+    return { nativeSessionId: fresh.nativeSessionId };
+  }
+
+  private attempt(
+    input: AgentTurnInput,
+    resumeSessionId: string | null,
+  ): Promise<AgentTurnResult & { resumeFailed: boolean }> {
+    const { text, cwd, handlers } = input;
 
     const args = [
       "-p",
@@ -54,11 +88,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     return new Promise((resolve) => {
       let sessionId: string | null = resumeSessionId;
+      let resumeFailed = false;
       let settled = false;
       const finish = () => {
         if (settled) return;
         settled = true;
-        resolve({ nativeSessionId: sessionId });
+        // A failed resume yields no usable session id.
+        resolve({ nativeSessionId: resumeFailed ? null : sessionId, resumeFailed });
+      };
+      // Errors are buffered: if the resume failed we retry, and surfacing the
+      // internal error to the user would just be noise.
+      const reportError = (message: string) => {
+        if (resumeFailed) return;
+        handlers.onError(message);
+      };
+      const markResumeFailure = () => {
+        if (resumeSessionId) resumeFailed = true;
       };
 
       let child;
@@ -80,7 +125,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         while ((nl = buffer.indexOf("\n")) !== -1) {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
-          if (line) this.handleEvent(line, handlers, (id) => (sessionId = id));
+          if (line) this.handleEvent(line, handlers, (id) => (sessionId = id), markResumeFailure);
         }
       });
 
@@ -90,14 +135,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       });
 
       child.on("error", (err) => {
-        handlers.onError(`${this.binary}: ${err.message}`);
+        reportError(`${this.binary}: ${err.message}`);
         finish();
       });
 
       child.on("close", (code) => {
-        if (buffer.trim()) this.handleEvent(buffer.trim(), handlers, (id) => (sessionId = id));
+        if (buffer.trim()) {
+          this.handleEvent(buffer.trim(), handlers, (id) => (sessionId = id), markResumeFailure);
+        }
+        // stderr carries the resume failure when it happens before any JSON.
+        if (isMissingSession(stderr)) markResumeFailure();
         if (code !== 0 && !settled) {
-          handlers.onError(stderr.trim() || `${this.binary} exited with code ${code}`);
+          reportError(stderr.trim() || `${this.binary} exited with code ${code}`);
         }
         finish();
       });
@@ -108,12 +157,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     line: string,
     handlers: AgentTurnInput["handlers"],
     setSession: (id: string) => void,
+    onResumeFailure: () => void,
   ): void {
     let evt: any;
     try {
       evt = JSON.parse(line);
     } catch {
-      return; // ignore non-JSON noise
+      // Non-JSON noise, but the resume error is printed as plain text.
+      if (isMissingSession(line)) onResumeFailure();
+      return;
     }
     if (typeof evt?.session_id === "string") setSession(evt.session_id);
 
@@ -129,6 +181,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         break;
       }
       case "result": {
+        const errors: string[] = Array.isArray(evt.errors) ? evt.errors : [];
+        if (errors.some(isMissingSession)) onResumeFailure();
         if (evt.is_error && typeof evt.result === "string") {
           handlers.onError(evt.result);
         }

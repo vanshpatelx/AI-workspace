@@ -25,6 +25,8 @@ export interface PreviewListing {
   servers: PreviewServer[];
   /** Absolute proxy base, already resolved against the Worker's host. */
   proxyBase: string;
+  /** Pairing code — the proxy requires it, same as the transport. */
+  token: string;
 }
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
@@ -256,6 +258,7 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               pending?.resolve({
                 servers: msg.servers,
                 proxyBase: `http://${host}${msg.proxyBase}`,
+                token: target.token,
               });
               break;
             }

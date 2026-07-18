@@ -21,6 +21,7 @@ interface Props {
 export function PreviewPanel({ url, preview, connected }: Props) {
   const [servers, setServers] = useState<PreviewServer[]>([]);
   const [proxyBase, setProxyBase] = useState("");
+  const [token, setToken] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -34,6 +35,7 @@ export function PreviewPanel({ url, preview, connected }: Props) {
       const result = await preview.scan(url);
       setServers(result.servers);
       setProxyBase(result.proxyBase);
+      setToken(result.token);
       setSelected((prev) => prev ?? result.servers[0]?.port ?? null);
     } catch (err) {
       setError((err as Error).message);
@@ -54,7 +56,11 @@ export function PreviewPanel({ url, preview, connected }: Props) {
     );
   }
 
-  const frameSrc = selected ? `${proxyBase}/${selected}/?_=${nonce}` : null;
+  // The proxy authenticates with the pairing code and replies with a cookie,
+  // so the framed page's own asset requests stay authorised.
+  const frameSrc = selected
+    ? `${proxyBase}/${selected}/?__aiw=${encodeURIComponent(token)}&_=${nonce}`
+    : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">

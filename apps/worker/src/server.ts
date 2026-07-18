@@ -1,6 +1,12 @@
 import { hostname } from "node:os";
 import { exec } from "node:child_process";
-import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
+import {
+  createServer,
+  request as httpRequest,
+  type OutgoingHttpHeaders,
+  type Server as HttpServer,
+} from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROTOCOL_VERSION,
   type AgentKind,
@@ -52,6 +58,16 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   const authed = new Set<string>();
 
   const files = new FileService(process.cwd());
+
+  /**
+   * Secret for the local HTTP surface, regenerated every run.
+   *
+   * The approval endpoint can allow or deny an agent's dangerous action, so it
+   * must not be callable by any other process on the machine. The PreToolUse
+   * hook inherits this via the environment when the Worker spawns the agent.
+   */
+  const hookToken = randomBytes(24).toString("hex");
+  process.env.AIW_HOOK_TOKEN = hookToken;
 
   let notifySeq = 0;
   /** Raise a notification to every connected Desktop. */
@@ -207,19 +223,56 @@ export function startWorker(config: WorkerConfig): RunningWorker {
    * "may I run this?"; safe commands are auto-allowed, sensitive ones surface
    * in the Approval Center and block until the user decides.
    */
+  /** Constant-time compare so a token can't be guessed byte-by-byte. */
+  function tokenMatches(candidate: string | undefined, expected: string): boolean {
+    if (!candidate) return false;
+    const a = Buffer.from(candidate);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+
+  const PREVIEW_COOKIE = "aiw_preview";
+
+  function cookieValue(header: string | undefined, name: string): string | undefined {
+    return header
+      ?.split(";")
+      .map((c) => c.trim())
+      .find((c) => c.startsWith(`${name}=`))
+      ?.slice(name.length + 1);
+  }
+
   function startApprovalEndpoint(): HttpServer {
     const http = createServer((req, res) => {
       // /preview/<port>/<rest> -> proxy to a local dev server. Framing the dev
       // server directly would only work when the Worker is the same machine as
       // the browser; proxying keeps previews working over Tailscale/relay.
-      const preview = (req.url ?? "").match(/^\/preview\/(\d+)(\/.*)?$/);
+      const rawUrl = req.url ?? "";
+      const preview = rawUrl.split("?")[0]!.match(/^\/preview\/(\d+)(\/.*)?$/);
       if (preview) {
         const port = Number(preview[1]);
         const path = preview[2] || "/";
+
+        // The proxy reaches anything listening on this machine, so it needs the
+        // same pairing code as the transport. The Desktop passes it once in the
+        // query string; we set a cookie so the framed page's own asset requests
+        // (which carry no query string) stay authenticated.
+        const query = rawUrl.includes("?") ? new URLSearchParams(rawUrl.split("?")[1]) : null;
+        const supplied = query?.get("__aiw") ?? cookieValue(req.headers.cookie, PREVIEW_COOKIE);
+        if (!tokenMatches(supplied, config.pairingCode)) {
+          res.writeHead(401, { "content-type": "text/plain" });
+          res.end("unauthorized: preview requires the Worker pairing code");
+          return;
+        }
+        const setCookie: Record<string, string> =
+          query?.get("__aiw") != null
+            ? {
+                "set-cookie": `${PREVIEW_COOKIE}=${config.pairingCode}; Path=/preview; HttpOnly; SameSite=Lax`,
+              }
+            : {};
         const upstream = httpRequest(
           { host: "127.0.0.1", port, path, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
           (up) => {
-            const headers = { ...up.headers };
+            const headers: OutgoingHttpHeaders = { ...up.headers, ...setCookie };
             // Strip framing guards so the preview can render inside the app.
             delete headers["x-frame-options"];
             delete headers["content-security-policy"];
@@ -237,6 +290,17 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
       if (req.method !== "POST" || req.url !== "/approval") {
         res.writeHead(404).end();
+        return;
+      }
+
+      // Only the hook we spawned knows this run's token. Without it, any local
+      // process could approve an action on the user's behalf.
+      if (!tokenMatches(req.headers["x-aiw-token"] as string | undefined, hookToken)) {
+        // Loud on purpose: a denied hook looks identical to a user rejection
+        // from the agent's side, so a misconfigured token must be visible here.
+        console.error("[worker] rejected unauthenticated approval request");
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ approved: false, reason: "unauthorized" }));
         return;
       }
       let body = "";
