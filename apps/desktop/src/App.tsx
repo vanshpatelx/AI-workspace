@@ -12,6 +12,7 @@ import {
   Trash2,
   FolderTree,
   Globe,
+  Smartphone,
   FolderOpen,
   GitBranch,
   Sparkles,
@@ -33,6 +34,7 @@ import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { FilesPanel } from "./components/FilesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
+import { DevicePanel } from "./components/DevicePanel.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
@@ -65,6 +67,7 @@ const TABS = [
   { id: "files", label: "Files", Icon: FolderTree },
   { id: "editor", label: "Editor", Icon: FileCode },
   { id: "preview", label: "Preview", Icon: Globe },
+  { id: "device", label: "Device", Icon: Smartphone },
 ] as const;
 
 /** What the user is currently looking at: a workspace, and a chat inside it. */
@@ -88,7 +91,7 @@ export function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<"chat" | "terminal" | "files" | "editor" | "preview">("chat");
+  const [tab, setTab] = useState<"chat" | "terminal" | "files" | "editor" | "preview" | "device">("chat");
   /** Files open in the editor, keyed by workspace so tabs follow the project. */
   const [openFiles, setOpenFiles] = useState<Record<string, OpenFile[]>>({});
   const [activeFile, setActiveFile] = useState<Record<string, string | null>>({});
@@ -431,6 +434,15 @@ export function App() {
                 key={active.worker.url}
                 url={active.worker.url}
                 preview={api.preview}
+                connected={!!connected}
+              />
+            </div>
+          ) : tab === "device" ? (
+            <div className="min-h-0 flex-1">
+              <DevicePanel
+                key={active.worker.url}
+                url={active.worker.url}
+                devices={api.devices}
                 connected={!!connected}
               />
             </div>
