@@ -42,6 +42,10 @@ describe("message classification", () => {
     "fs.list",
     "fs.read",
     "preview.scan",
+    "device.scan",
+    "device.tap",
+    "device.text",
+    "device.key",
   ])("treats %s as a client message", (type) => {
     expect(isClientMessage({ type } as never)).toBe(true);
   });
