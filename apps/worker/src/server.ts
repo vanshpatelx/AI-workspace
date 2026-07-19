@@ -26,6 +26,7 @@ import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers } from "./preview.js";
 import { discoverProjects } from "./discovery.js";
 import { ParkedTasks } from "./parked.js";
+import { ScheduledPrompts } from "./schedule.js";
 import { formatWait } from "./ratelimit.js";
 import { RelayLink } from "./relay-link.js";
 import { log } from "./log.js";
@@ -84,6 +85,19 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   const authed = new Set<string>();
 
   const workspaces = new WorkspaceRegistry();
+
+  /**
+   * Prompts queued to run later. A scheduled prompt with no session starts a
+   * fresh one, so morning results are not buried in yesterday's thread.
+   */
+  const schedule = new ScheduledPrompts((prompt) => {
+    const sessionId = prompt.sessionId ?? `s_${Math.random().toString(36).slice(2, 10)}`;
+    workspaces.addSession(prompt.workspaceId, sessionId);
+    log.info(`running scheduled prompt in ${prompt.workspaceId}`);
+    notify("info", "info", "Scheduled task started", prompt.text.slice(0, 120));
+    void handleChat(null, prompt.workspaceId, sessionId, prompt.text);
+    server.broadcast({ type: "schedule.list", prompts: schedule.list() });
+  });
 
   /**
    * Turns waiting on a usage limit. Resuming replays the prompt through the
@@ -510,6 +524,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             }
             for (const request of approvals.list()) conn.send({ type: "approval.request", request });
             conn.send({ type: "tasks.parked", tasks: parked.list() });
+            conn.send({ type: "schedule.list", prompts: schedule.list() });
             break;
           }
           case "subscribe":
@@ -656,6 +671,41 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               });
             }
             break;
+          case "schedule.add": {
+            try {
+              // Validate the workspace now rather than failing at fire time,
+              // hours later, with nobody watching.
+              workspaces.pathOf(msg.workspaceId);
+              const prompt = schedule.add({
+                workspaceId: msg.workspaceId,
+                sessionId: msg.sessionId,
+                text: msg.text,
+                runAt: msg.runAt,
+              });
+              log.info(
+                `scheduled a prompt for ${new Date(prompt.runAt).toLocaleString()}`,
+              );
+              server.broadcast({ type: "schedule.list", prompts: schedule.list() });
+            } catch (err) {
+              conn.send({
+                type: "fs.error",
+                requestId: msg.requestId,
+                message: (err as Error).message,
+              });
+            }
+            break;
+          }
+          case "schedule.cancel":
+            if (schedule.cancel(msg.promptId)) {
+              log.info(`scheduled prompt ${msg.promptId} cancelled`);
+              server.broadcast({ type: "schedule.list", prompts: schedule.list() });
+            }
+            break;
+          case "schedule.runNow":
+            if (schedule.runNow(msg.promptId)) {
+              server.broadcast({ type: "schedule.list", prompts: schedule.list() });
+            }
+            break;
           case "task.resumeNow":
             if (parked.resumeNow(msg.taskId)) {
               server.broadcast({ type: "tasks.parked", tasks: parked.list() });
@@ -733,6 +783,10 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     log.info(`${parked.list().length} task(s) waiting on quota`);
   }
   parked.restore();
+  if (schedule.list().length > 0) {
+    log.info(`${schedule.list().length} scheduled prompt(s) queued`);
+  }
+  schedule.restore();
 
   const agents = config.agents.map(agentLabel).join(", ") || "none detected";
   log.banner({
@@ -756,6 +810,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     async stop() {
       approvals.rejectAll();
       parked.stopAll();
+      schedule.stopAll();
       terminals.closeAll();
       keepAwake.stop();
       relay?.stop();

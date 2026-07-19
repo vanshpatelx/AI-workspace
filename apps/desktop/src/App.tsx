@@ -44,6 +44,7 @@ import type { OpenFile } from "./components/EditorPanel.js";
 import { TodoQueue } from "./components/TodoQueue.js";
 import { StepGroup } from "./components/StepGroup.js";
 import { ParkedBanner } from "./components/ParkedBanner.js";
+import { SchedulePicker, ScheduledList } from "./components/SchedulePicker.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 /**
@@ -104,6 +105,9 @@ export function App() {
     createSession,
     resumeParked,
     cancelParked,
+    schedulePrompt,
+    runScheduled,
+    cancelScheduled,
   } = api;
 
   // Resolve the selection against live state, falling back to the first
@@ -277,6 +281,16 @@ export function App() {
                 onCancel={(id) => cancelParked(t.url, id)}
               />
             ) : null,
+          )}
+
+          {active && (
+            <ScheduledList
+              prompts={(active.worker.scheduled ?? []).filter(
+                (p) => p.workspaceId === active.workspace.workspaceId,
+              )}
+              onRunNow={(id) => runScheduled(active.worker.url, id)}
+              onCancel={(id) => cancelScheduled(active.worker.url, id)}
+            />
           )}
 
           {targets.map((t) => (
@@ -509,6 +523,21 @@ export function App() {
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void submitChat()}
                   placeholder={connected ? `Message the agent in ${active.workspace.name}…` : "Connecting…"}
                   disabled={!connected}
+                />
+                <SchedulePicker
+                  disabled={!connected}
+                  hasText={Boolean(draft.trim())}
+                  onSchedule={(runAt) => {
+                    if (!active) return;
+                    schedulePrompt(
+                      active.worker.url,
+                      active.workspace.workspaceId,
+                      activeSessionId,
+                      draft,
+                      runAt,
+                    );
+                    setDraft("");
+                  }}
                 />
                 <Button size="icon" disabled={!connected || !draft.trim()} onClick={() => void submitChat()}>
                   <Send className="h-4 w-4" />

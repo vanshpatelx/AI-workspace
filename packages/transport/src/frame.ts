@@ -40,6 +40,9 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
     case "session.adopt":
     case "task.resumeNow":
     case "task.cancel":
+    case "schedule.add":
+    case "schedule.cancel":
+    case "schedule.runNow":
       return true;
     default:
       return false;

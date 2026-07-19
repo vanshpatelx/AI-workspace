@@ -7,6 +7,7 @@ import type {
   MachineSummary,
   ParkedTask,
   PreviewServer,
+  ScheduledPrompt,
   TurnUsage,
   ServerMessage,
   TodoItem,
@@ -80,6 +81,8 @@ export interface WorkerState {
   todos: Record<string, TodoItem[]>;
   /** Turns waiting on a usage limit. */
   parked: ParkedTask[];
+  /** Prompts queued to run at a chosen time. */
+  scheduled: ScheduledPrompt[];
   notices: WorkerNotification[];
 }
 
@@ -94,6 +97,16 @@ export interface WorkersApi {
   /** Run parked work immediately, or drop it. */
   resumeParked: (url: string, taskId: string) => void;
   cancelParked: (url: string, taskId: string) => void;
+  /** Queue a prompt to run later, and manage what is queued. */
+  schedulePrompt: (
+    url: string,
+    workspaceId: string,
+    sessionId: string | null,
+    text: string,
+    runAt: number,
+  ) => void;
+  runScheduled: (url: string, promptId: string) => void;
+  cancelScheduled: (url: string, promptId: string) => void;
   openWorkspace: (url: string, path: string) => Promise<Workspace>;
   closeWorkspace: (url: string, workspaceId: string) => void;
   createSession: (url: string, workspaceId: string) => Promise<string>;
@@ -144,6 +157,7 @@ function emptyState(url: string): WorkerState {
     commands: {},
     todos: {},
     parked: [],
+    scheduled: [],
     notices: [],
   };
 }
@@ -396,6 +410,9 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                 },
               }));
               break;
+            case "schedule.list":
+              patch(target.url, (s) => ({ ...s, scheduled: msg.prompts }));
+              break;
             case "tasks.parked":
               patch(target.url, (s) => ({ ...s, parked: msg.tasks }));
               break;
@@ -517,6 +534,29 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [emit],
   );
 
+  const schedulePrompt = useCallback(
+    (url: string, workspaceId: string, sessionId: string | null, text: string, runAt: number) =>
+      emit(url, {
+        type: "schedule.add",
+        requestId: `sch-${++commandCounter}`,
+        workspaceId,
+        sessionId,
+        text,
+        runAt,
+      }),
+    [emit],
+  );
+
+  const runScheduled = useCallback(
+    (url: string, promptId: string) => emit(url, { type: "schedule.runNow", promptId }),
+    [emit],
+  );
+
+  const cancelScheduled = useCallback(
+    (url: string, promptId: string) => emit(url, { type: "schedule.cancel", promptId }),
+    [emit],
+  );
+
   const openWorkspace = useCallback(
     (url: string, path: string) =>
       request<Workspace>(url, (requestId) => ({ type: "workspace.open", requestId, path })),
@@ -623,6 +663,9 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     resolveApproval,
     resumeParked,
     cancelParked,
+    schedulePrompt,
+    runScheduled,
+    cancelScheduled,
     openWorkspace,
     closeWorkspace,
     createSession,
