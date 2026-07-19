@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor, { DiffEditor } from "@monaco-editor/react";
 import { X, Save, FileText, Columns2, Loader2 } from "lucide-react";
+// Importing this here (rather than in App) keeps Monaco out of the initial
+// bundle — it only loads when the Editor tab is actually opened.
 import { languageFor } from "../lib/monaco.js";
 import type { WorkersApi } from "../lib/useWorkers.js";
 import { Button } from "./ui/button.js";

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   MonitorSmartphone,
   Send,
@@ -33,7 +33,6 @@ import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { FilesPanel } from "./components/FilesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
-import "./lib/monaco.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
@@ -41,11 +40,20 @@ import { UsageBar } from "./components/UsageBar.js";
 import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
 import { LiveActivity } from "./components/LiveActivity.js";
 import { RecentProjects } from "./components/RecentProjects.js";
-import { EditorPanel, type OpenFile } from "./components/EditorPanel.js";
+import type { OpenFile } from "./components/EditorPanel.js";
 import { TodoQueue } from "./components/TodoQueue.js";
 import { StepGroup } from "./components/StepGroup.js";
 import { ParkedBanner } from "./components/ParkedBanner.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
+
+/**
+ * Monaco is several megabytes and only needed once the Editor tab is opened,
+ * so it is split out of the initial bundle. Loading it eagerly also pushed the
+ * production build past the memory available on a CI runner.
+ */
+const EditorPanel = lazy(() =>
+  import("./components/EditorPanel.js").then((m) => ({ default: m.EditorPanel })),
+);
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -354,6 +362,13 @@ export function App() {
             </div>
           ) : tab === "editor" ? (
             <div className="min-h-0 flex-1">
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    Loading editor…
+                  </div>
+                }
+              >
               <EditorPanel
                 url={active.worker.url}
                 workspaceId={active.workspace.workspaceId}
@@ -383,6 +398,7 @@ export function App() {
                   }))
                 }
               />
+              </Suspense>
             </div>
           ) : tab === "files" ? (
             <div className="min-h-0 flex-1">
