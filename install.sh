@@ -46,7 +46,9 @@ info "Installing dependencies"
 (cd "$APP_DIR" && pnpm install --silent)
 
 info "Building"
-(cd "$APP_DIR" && pnpm -r build >/dev/null)
+# The desktop bundle (Monaco plus syntax grammars) needs more heap than Node
+# allows by default — without this the build aborts on lower-memory machines.
+(cd "$APP_DIR" && NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}" pnpm -r build >/dev/null)
 
 # --- link --------------------------------------------------------------------
 mkdir -p "$BIN_DIR"
