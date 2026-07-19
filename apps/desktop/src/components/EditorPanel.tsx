@@ -13,6 +13,51 @@ export interface OpenFile {
   saved: string;
   /** Current buffer, which may differ. */
   draft: string;
+  /**
+   * Set for images, PDFs and anything else that is not text.
+   *
+   * These open as a preview rather than in the editor: feeding binary through a
+   * text editor shows mojibake and would write it back corrupted on save.
+   */
+  media?: { mime: string; base64: string };
+}
+
+
+/** Images, video, audio and PDFs, straight from the bytes the Worker sent. */
+function MediaPreview({ media, path }: { media: { mime: string; base64: string }; path: string }) {
+  const src = `data:${media.mime};base64,${media.base64}`;
+  const name = path.split("/").pop();
+  if (media.mime.startsWith("image/")) {
+    return (
+      <div className="flex h-full items-center justify-center overflow-auto bg-black/20 p-4">
+        <img src={src} alt={name} className="max-h-full max-w-full object-contain" />
+      </div>
+    );
+  }
+  if (media.mime.startsWith("video/")) {
+    return (
+      <div className="flex h-full items-center justify-center bg-black/20 p-4">
+        <video src={src} controls className="max-h-full max-w-full" />
+      </div>
+    );
+  }
+  if (media.mime.startsWith("audio/")) {
+    return (
+      <div className="flex h-full items-center justify-center p-4">
+        <audio src={src} controls />
+      </div>
+    );
+  }
+  if (media.mime === "application/pdf") {
+    return <iframe src={src} title={name} className="h-full w-full border-0" />;
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+      <FileText className="h-6 w-6 opacity-40" />
+      <span>{name}</span>
+      <span className="text-xs">{media.mime} — no preview available</span>
+    </div>
+  );
 }
 
 /**
@@ -50,7 +95,7 @@ export function EditorPanel({
   const [error, setError] = useState<string | null>(null);
   const [showDiff, setShowDiff] = useState(false);
   const active = files.find((f) => f.path === activePath) ?? null;
-  const dirty = active ? active.draft !== active.saved : false;
+  const dirty = active && !active.media ? active.draft !== active.saved : false;
 
   const save = useCallback(async () => {
     if (!active || !dirty) return;
@@ -160,7 +205,10 @@ export function EditorPanel({
       )}
 
       <div className="min-h-0 flex-1">
-        {active &&
+        {active?.media ? (
+          <MediaPreview media={active.media} path={active.path} />
+        ) : (
+          active &&
           (showDiff ? (
             <DiffEditor
               key={`diff:${active.path}`}
@@ -199,7 +247,8 @@ export function EditorPanel({
                 padding: { top: 10 },
               }}
             />
-          ))}
+          ))
+        )}
       </div>
     </div>
   );
