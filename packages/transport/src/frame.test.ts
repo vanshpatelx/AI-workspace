@@ -42,6 +42,7 @@ describe("message classification", () => {
     "fs.list",
     "fs.read",
     "preview.scan",
+    "preview.reload",
   ])("treats %s as a client message", (type) => {
     expect(isClientMessage({ type } as never)).toBe(true);
   });

@@ -25,6 +25,62 @@ function guessFramework(port: number, process: string): string | undefined {
 }
 
 /**
+ * Both loopback addresses, because binding to one is not binding to both.
+ *
+ * Metro listens on ::1 only, so probing 127.0.0.1 alone found nothing at all
+ * and the bundler was invisible — as would be any other IPv6-only dev server.
+ */
+const LOOPBACK = ["127.0.0.1", "[::1]"];
+
+/**
+ * Ask a port whether it is Metro.
+ *
+ * React Native's status middleware exists precisely so callers can tell the
+ * bundler apart from whatever else might be sitting on 8081, and it names the
+ * project it is serving in a header while it is at it. Probing this rather than
+ * guessing from the port number means Metro on a non-default port is still
+ * recognised, and something else on 8081 is not mistaken for it.
+ */
+async function probeMetro(port: number): Promise<{ projectRoot?: string } | null> {
+  for (const host of LOOPBACK) {
+    try {
+      const res = await fetch(`http://${host}:${port}/status`, {
+        signal: AbortSignal.timeout(1200),
+      });
+      const body = await res.text();
+      if (!body.includes("packager-status:running")) continue;
+      const root = res.headers.get("x-react-native-project-root");
+      return root ? { projectRoot: root } : {};
+    } catch {
+      // Not listening on this address, or not HTTP — try the other one.
+    }
+  }
+  return null;
+}
+
+/**
+ * Ask Metro to reload the app connected to it.
+ *
+ * The dev server broadcasts a reload to every attached client, so the simulator
+ * running on the user's own machine picks it up — which is the point: the agent
+ * changes code here, and the app reloads over there.
+ */
+export async function reloadMetro(port: number): Promise<string | null> {
+  for (const host of LOOPBACK) {
+    try {
+      const res = await fetch(`http://${host}:${port}/reload`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) return null;
+      return `Metro answered ${res.status}`;
+    } catch {
+      // Wrong address family, or nothing there — try the other loopback.
+    }
+  }
+  return "could not reach Metro on that port";
+}
+
+/**
  * Enumerate local TCP listeners via lsof (macOS/Linux), then probe each one
  * over HTTP. Only ports that actually answer HTTP are reported, so databases
  * and other non-web listeners are filtered out.
@@ -57,6 +113,16 @@ export async function detectPreviewServers(workerPort: number): Promise<PreviewS
 
   const probes = [...candidates.entries()].map(
     async ([port, process]): Promise<PreviewServer | null> => {
+      // Ask about Metro first. Its root path answers 404 with an HTML error
+      // body, which would otherwise pass the "serves a web page" test below and
+      // be offered as a preview that can only ever render an error.
+      const metro = await probeMetro(port);
+      if (metro) {
+        const server: PreviewServer = { port, process, kind: "metro", framework: "Metro" };
+        if (metro.projectRoot) server.projectRoot = metro.projectRoot;
+        return server;
+      }
+
       const url = `http://127.0.0.1:${port}/`;
       try {
         const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(1200) });

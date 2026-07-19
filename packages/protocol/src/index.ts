@@ -76,6 +76,17 @@ export interface PreviewServer {
   title?: string;
   /** Best-effort framework guess, e.g. "Vite". */
   framework?: string;
+  /**
+   * Metro, the React Native bundler.
+   *
+   * Worth distinguishing because it is not something to frame: it serves a JS
+   * bundle, not a page. What you do with it is point a simulator on *your*
+   * machine at it, so the app runs locally at full frame rate while the code
+   * and the bundler stay on the Worker.
+   */
+  kind?: "metro";
+  /** Absolute path of the project Metro is serving, when it reports one. */
+  projectRoot?: string;
 }
 
 /** An entry in a workspace directory listing. */
@@ -227,6 +238,8 @@ export type ClientMessage =
       content: string;
     }
   | { type: "preview.scan"; requestId: string }
+  /** Tell Metro to reload the app connected to it. */
+  | { type: "preview.reload"; requestId: string; port: number }
   | { type: "discover.projects"; requestId: string }
   | { type: "task.resumeNow"; taskId: string }
   | { type: "task.cancel"; taskId: string }
@@ -298,6 +311,8 @@ export type ServerMessage =
        */
       proxyBase: string;
     }
+  /** Result of a Metro reload; `error` is null when the app was told to reload. */
+  | { type: "preview.reloaded"; requestId: string; error: string | null }
   | { type: "discover.result"; requestId: string; projects: DiscoveredProject[] }
   | { type: "tasks.parked"; tasks: ParkedTask[] }
   | { type: "schedule.list"; prompts: ScheduledPrompt[] }

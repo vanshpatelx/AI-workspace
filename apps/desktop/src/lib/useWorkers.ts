@@ -129,6 +129,8 @@ export interface WorkersApi {
   };
   preview: {
     scan: (url: string) => Promise<PreviewListing>;
+    /** Ask Metro to reload the app; resolves to an error message, or null. */
+    reload: (url: string, port: number) => Promise<string | null>;
   };
   discover: {
     /** Past agent conversations found on that machine. */
@@ -391,6 +393,13 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               });
               break;
             }
+            case "preview.reloaded": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              // A refused reload is a message to show, not a thrown error.
+              pending?.resolve(msg.error);
+              break;
+            }
             case "fs.error": {
               const pending = fsPending.current.get(msg.requestId);
               fsPending.current.delete(msg.requestId);
@@ -633,6 +642,8 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     () => ({
       scan: (url: string) =>
         request<PreviewListing>(url, (requestId) => ({ type: "preview.scan", requestId })),
+      reload: (url: string, port: number) =>
+        request<string | null>(url, (requestId) => ({ type: "preview.reload", requestId, port })),
     }),
     [request],
   );
