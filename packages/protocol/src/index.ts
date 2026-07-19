@@ -78,28 +78,6 @@ export interface PreviewServer {
   framework?: string;
 }
 
-/**
- * A running simulator or device the Worker can mirror.
- *
- * Unlike a dev server, this cannot be proxied — there is no HTTP endpoint to
- * forward, only a native window. Frames are captured and input is injected, and
- * because the tooling for input is not universally present, whether a device can
- * be driven is a property of the device rather than an assumption.
- */
-export interface MirroredDevice {
-  /** Simulator UDID (iOS) or adb serial (Android). */
-  id: string;
-  platform: "ios" | "android";
-  /** Model name, e.g. "iPhone 16 Pro". */
-  name: string;
-  /** OS version or device kind, e.g. "iOS 18.6" / "Emulator". */
-  runtime: string;
-  /** False when the tool needed to inject input is missing — view-only. */
-  canInput: boolean;
-  /** Why input is unavailable, and how to enable it. */
-  inputHint?: string;
-}
-
 /** An entry in a workspace directory listing. */
 export interface FileEntry {
   name: string;
@@ -249,20 +227,6 @@ export type ClientMessage =
       content: string;
     }
   | { type: "preview.scan"; requestId: string }
-  | { type: "device.scan"; requestId: string }
-  /**
-   * Tap at a fraction (0..1) of the displayed frame rather than in pixels: the
-   * Desktop renders frames at whatever size its panel is and does not know the
-   * device's real geometry, so only the Worker can resolve this correctly.
-   */
-  | { type: "device.tap"; requestId: string; deviceId: string; x: number; y: number }
-  | { type: "device.text"; requestId: string; deviceId: string; text: string }
-  | {
-      type: "device.key";
-      requestId: string;
-      deviceId: string;
-      key: "home" | "back" | "enter" | "backspace";
-    }
   | { type: "discover.projects"; requestId: string }
   | { type: "task.resumeNow"; taskId: string }
   | { type: "task.cancel"; taskId: string }
@@ -334,19 +298,6 @@ export type ServerMessage =
        */
       proxyBase: string;
     }
-  | {
-      type: "device.list";
-      requestId: string;
-      devices: MirroredDevice[];
-      /**
-       * Host-relative base for the frame stream, e.g. ":4502/device". The client
-       * prepends the host it reached the Worker on and appends the device id,
-       * giving "http://<host>:4502/device/<id>/stream".
-       */
-      streamBase: string;
-    }
-  /** Result of an input attempt; `error` is null when it landed. */
-  | { type: "device.input"; requestId: string; error: string | null }
   | { type: "discover.result"; requestId: string; projects: DiscoveredProject[] }
   | { type: "tasks.parked"; tasks: ParkedTask[] }
   | { type: "schedule.list"; prompts: ScheduledPrompt[] }

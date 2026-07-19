@@ -36,10 +36,6 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
     case "fs.read":
     case "fs.write":
     case "preview.scan":
-    case "device.scan":
-    case "device.tap":
-    case "device.text":
-    case "device.key":
     case "discover.projects":
     case "session.adopt":
     case "task.resumeNow":

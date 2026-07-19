@@ -11,7 +11,6 @@ import {
   PROTOCOL_VERSION,
   type AgentKind,
   type MachineSummary,
-  type MirroredDevice,
   type NotificationKind,
   type TurnUsage,
   type WorkerNotification,
@@ -25,7 +24,6 @@ import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers } from "./preview.js";
-import { listDevices, capture, imageSize, tap, typeText, pressKey } from "./devices.js";
 import { discoverProjects } from "./discovery.js";
 import { ParkedTasks } from "./parked.js";
 import { ScheduledPrompts } from "./schedule.js";
@@ -382,14 +380,6 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   const PREVIEW_COOKIE = "aiw_preview";
 
-  /**
-   * Devices seen by the last scan, and the pixel size of each one's most recent
-   * frame. Taps arrive as a fraction of the displayed image and can only be
-   * turned into real coordinates against a frame we have actually captured.
-   */
-  const knownDevices = new Map<string, MirroredDevice>();
-  const lastFrameSize = new Map<string, { width: number; height: number }>();
-
   function cookieValue(header: string | undefined, name: string): string | undefined {
     return header
       ?.split(";")
@@ -442,65 +432,6 @@ export function startWorker(config: WorkerConfig): RunningWorker {
           res.end(`preview upstream error: ${err.message}`);
         });
         req.pipe(upstream);
-        return;
-      }
-
-      // /device/<id>/stream -> a never-ending sequence of PNG frames.
-      //
-      // multipart/x-mixed-replace lets a plain <img> render this as live video
-      // over one connection: the browser paints each part as it arrives and
-      // discards the last. Sending frames over the WebSocket instead would mean
-      // base64 (a third larger) competing with chat traffic on the same socket.
-      const device = rawUrl.split("?")[0]!.match(/^\/device\/([\w.:-]+)\/stream$/);
-      if (device) {
-        const deviceId = device[1]!;
-        const query = rawUrl.includes("?") ? new URLSearchParams(rawUrl.split("?")[1]) : null;
-        if (!tokenMatches(query?.get("__aiw") ?? undefined, config.pairingCode)) {
-          res.writeHead(401, { "content-type": "text/plain" });
-          res.end("unauthorized: device stream requires the Worker pairing code");
-          return;
-        }
-        const target = knownDevices.get(deviceId);
-        if (!target) {
-          res.writeHead(404, { "content-type": "text/plain" });
-          res.end("unknown device — rescan from the Desktop app");
-          return;
-        }
-
-        const BOUNDARY = "aiwframe";
-        res.writeHead(200, {
-          "content-type": `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
-          "cache-control": "no-store",
-          connection: "close",
-        });
-
-        let live = true;
-        res.on("close", () => (live = false));
-
-        void (async () => {
-          // Captures run back-to-back rather than on a fixed interval: a frame
-          // takes ~250-350ms and the cost varies, so a timer would either idle
-          // or pile up overlapping simctl processes.
-          while (live) {
-            try {
-              const frame = await capture(target);
-              if (!live) break;
-              const size = imageSize(frame.data);
-              if (size) lastFrameSize.set(deviceId, size);
-              res.write(
-                `--${BOUNDARY}\r\nContent-Type: ${frame.mime}\r\nContent-Length: ${frame.data.length}\r\n\r\n`,
-              );
-              res.write(frame.data);
-              res.write("\r\n");
-            } catch (err) {
-              // A shut-down simulator ends the stream rather than spinning on
-              // errors — the Desktop reconnects after the next scan.
-              log.error(`device stream ${deviceId}: ${(err as Error).message}`);
-              break;
-            }
-          }
-          res.end();
-        })();
         return;
       }
 
@@ -829,53 +760,6 @@ export function startWorker(config: WorkerConfig): RunningWorker {
                 conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
               );
             break;
-          case "device.scan":
-            listDevices()
-              .then((devices) => {
-                for (const device of devices) knownDevices.set(device.id, device);
-                log.preview(devices.length);
-                conn.send({
-                  type: "device.list",
-                  requestId: msg.requestId,
-                  devices,
-                  streamBase: `:${config.port + 1}/device`,
-                });
-              })
-              .catch((err: Error) =>
-                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
-              );
-            break;
-          case "device.tap":
-          case "device.text":
-          case "device.key": {
-            const device = knownDevices.get(msg.deviceId);
-            if (!device) {
-              conn.send({
-                type: "device.input",
-                requestId: msg.requestId,
-                error: "unknown device — rescan",
-              });
-              break;
-            }
-            // Injection needs the frame's pixel size to resolve a fractional
-            // tap. It is only known once a frame has been captured, so a tap
-            // that arrives before the stream starts is reported, not guessed.
-            const frame = lastFrameSize.get(msg.deviceId);
-            const action =
-              msg.type === "device.tap"
-                ? frame
-                  ? tap(device, msg.x, msg.y, frame)
-                  : Promise.resolve("no frame captured yet")
-                : msg.type === "device.text"
-                  ? typeText(device, msg.text)
-                  : pressKey(device, msg.key);
-            action
-              .then((error) => conn.send({ type: "device.input", requestId: msg.requestId, error }))
-              .catch((err: Error) =>
-                conn.send({ type: "device.input", requestId: msg.requestId, error: err.message }),
-              );
-            break;
-          }
           default:
             break;
         }
