@@ -85,6 +85,20 @@ export interface FileEntry {
   size: number;
 }
 
+/** A turn the agent could not finish because the usage quota ran out. */
+export interface ParkedTask {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  /** The prompt to run again when the quota returns. */
+  text: string;
+  /** Epoch ms when this will be retried. */
+  resumeAt: number;
+  parkedAt: number;
+  /** Why it stopped, e.g. "five_hour usage limit". */
+  reason: string;
+}
+
 /** One item in the agent's working plan. */
 export interface TodoItem {
   content: string;
@@ -202,6 +216,8 @@ export type ClientMessage =
     }
   | { type: "preview.scan"; requestId: string }
   | { type: "discover.projects"; requestId: string }
+  | { type: "task.resumeNow"; taskId: string }
+  | { type: "task.cancel"; taskId: string }
   | {
       /** Continue a conversation the agent had before, in this workspace. */
       type: "session.adopt";
@@ -261,6 +277,7 @@ export type ServerMessage =
       proxyBase: string;
     }
   | { type: "discover.result"; requestId: string; projects: DiscoveredProject[] }
+  | { type: "tasks.parked"; tasks: ParkedTask[] }
   | { type: "notification"; notification: WorkerNotification };
 
 export type WireMessage = ClientMessage | ServerMessage;

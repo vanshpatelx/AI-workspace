@@ -44,6 +44,7 @@ import { RecentProjects } from "./components/RecentProjects.js";
 import { EditorPanel, type OpenFile } from "./components/EditorPanel.js";
 import { TodoQueue } from "./components/TodoQueue.js";
 import { StepGroup } from "./components/StepGroup.js";
+import { ParkedBanner } from "./components/ParkedBanner.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
@@ -85,8 +86,17 @@ export function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const api = useWorkers(targets);
-  const { workers, send, runCommand, resolveApproval, openWorkspace, closeWorkspace, createSession } =
-    api;
+  const {
+    workers,
+    send,
+    runCommand,
+    resolveApproval,
+    openWorkspace,
+    closeWorkspace,
+    createSession,
+    resumeParked,
+    cancelParked,
+  } = api;
 
   // Resolve the selection against live state, falling back to the first
   // workspace so the app is never pointing at something that vanished.
@@ -249,6 +259,17 @@ export function App() {
               onRemove={() => persist(targets.filter((x) => x.url !== t.url))}
             />
           ))}
+
+          {targets.map((t) =>
+            (workers[t.url]?.parked ?? []).length > 0 ? (
+              <ParkedBanner
+                key={`parked-${t.url}`}
+                tasks={workers[t.url]?.parked ?? []}
+                onResumeNow={(id) => resumeParked(t.url, id)}
+                onCancel={(id) => cancelParked(t.url, id)}
+              />
+            ) : null,
+          )}
 
           {targets.map((t) => (
             <RecentProjects

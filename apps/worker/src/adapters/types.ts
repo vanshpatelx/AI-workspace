@@ -14,6 +14,8 @@ export interface AgentTurnHandlers {
   onToolResult?(toolId: string, output: string, isError: boolean): void;
   /** Token, cost and timing accounting once the turn completes. */
   onUsage?(usage: TurnUsage): void;
+  /** The turn stopped because the usage quota ran out. */
+  onRateLimited?(resumeAt: number, reason: string): void;
   /** Non-fatal status the user should see (e.g. a session had to restart). */
   onNotice?(text: string): void;
   /** Fatal error for this turn. */

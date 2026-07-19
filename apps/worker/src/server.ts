@@ -25,6 +25,8 @@ import { TerminalManager } from "./terminals.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers } from "./preview.js";
 import { discoverProjects } from "./discovery.js";
+import { ParkedTasks } from "./parked.js";
+import { formatWait } from "./ratelimit.js";
 import { RelayLink } from "./relay-link.js";
 import { log } from "./log.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
@@ -82,6 +84,17 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   const authed = new Set<string>();
 
   const workspaces = new WorkspaceRegistry();
+
+  /**
+   * Turns waiting on a usage limit. Resuming replays the prompt through the
+   * ordinary chat path, so a retried turn behaves exactly like a fresh one.
+   */
+  const parked = new ParkedTasks((task) => {
+    log.info(`resuming parked task in ${task.workspaceId}`);
+    notify("info", "info", "Resuming after usage limit", task.text.slice(0, 120));
+    void handleChat(null, task.workspaceId, task.sessionId, task.text);
+    server.broadcast({ type: "tasks.parked", tasks: parked.list() });
+  });
 
   /**
    * Secret for the local HTTP surface, regenerated every run.
@@ -148,11 +161,15 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   }
 
   async function handleChat(
-    conn: TransportConnection,
+    /** null when a parked task resumes itself with nobody watching. */
+    conn: TransportConnection | null,
     workspaceId: string,
     sessionId: string,
     text: string,
   ): Promise<void> {
+    // Broadcast when there is no originating client, so every Desktop sees it.
+    const emit = (msg: Parameters<TransportConnection["send"]>[0]) =>
+      conn ? conn.send(msg) : server.broadcast(msg);
     if (!defaultAgent) {
       notify("agent-error", "error", "No agent configured on this Worker");
       return;
@@ -194,12 +211,12 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             // bare runs a paragraph into the table that follows it, which then
             // renders as raw pipes once the transcript is replayed.
             reply = reply ? `${reply}\n\n${delta}` : delta;
-            conn.send({ type: "chat.delta", sessionId, text: delta });
+            emit({ type: "chat.delta", sessionId, text: delta });
           },
           onReasoning: (text) => {
             if (!text.trim()) return; // never persist an empty reasoning turn
             sessions.appendTurn(sessionId, { role: "reasoning", text, at: Date.now() });
-            conn.send({ type: "chat.reasoning", sessionId, text });
+            emit({ type: "chat.reasoning", sessionId, text });
           },
           onTool: (toolId, tool, target) => {
             // Recorded as its own turn so the transcript shows what the agent
@@ -212,20 +229,27 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               toolId,
               at: Date.now(),
             });
-            conn.send({ type: "chat.tool", sessionId, toolId, tool, target });
+            emit({ type: "chat.tool", sessionId, toolId, tool, target });
           },
           onTodos: (todos) => {
-            conn.send({ type: "chat.todos", sessionId, todos });
+            emit({ type: "chat.todos", sessionId, todos });
           },
           onToolResult: (toolId, output, isError) => {
             sessions.attachToolResult(sessionId, toolId, output, isError);
-            conn.send({ type: "chat.tool.result", sessionId, toolId, output, isError });
+            emit({ type: "chat.tool.result", sessionId, toolId, output, isError });
           },
           onUsage: (usage) => {
             lastUsage = usage;
-            conn.send({ type: "chat.usage", sessionId, usage });
+            emit({ type: "chat.usage", sessionId, usage });
           },
-          onNotice: (notice) => conn.send({ type: "chat.delta", sessionId, text: `\n_${notice}_\n` }),
+          onNotice: (notice) => emit({ type: "chat.delta", sessionId, text: `\n_${notice}_\n` }),
+          onRateLimited: (resumeAt, reason) => {
+            const task = parked.park({ workspaceId, sessionId, text, resumeAt, reason });
+            const wait = formatWait(resumeAt - Date.now());
+            log.warn(`${reason} — parked, resuming in ${wait}`);
+            notify("info", "warn", `Paused: ${reason}`, `Resuming automatically in ${wait}`);
+            server.broadcast({ type: "tasks.parked", tasks: parked.list() });
+          },
           onError: (message) => notify("agent-error", "error", "Agent error", message),
         },
       });
@@ -449,6 +473,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
 
   const approvalHttp = startApprovalEndpoint();
 
+
   server = new TransportServer(
     { port: config.port },
     {
@@ -484,6 +509,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               }
             }
             for (const request of approvals.list()) conn.send({ type: "approval.request", request });
+            conn.send({ type: "tasks.parked", tasks: parked.list() });
             break;
           }
           case "subscribe":
@@ -630,6 +656,17 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               });
             }
             break;
+          case "task.resumeNow":
+            if (parked.resumeNow(msg.taskId)) {
+              server.broadcast({ type: "tasks.parked", tasks: parked.list() });
+            }
+            break;
+          case "task.cancel":
+            if (parked.cancel(msg.taskId)) {
+              log.info(`parked task ${msg.taskId} cancelled`);
+              server.broadcast({ type: "tasks.parked", tasks: parked.list() });
+            }
+            break;
           case "discover.projects":
             discoverProjects()
               .then((projects) => {
@@ -690,6 +727,13 @@ export function startWorker(config: WorkerConfig): RunningWorker {
     },
   );
 
+  // Re-arm parked work only once the transport exists: a task whose window
+  // already passed fires synchronously and broadcasts immediately.
+  if (parked.list().length > 0) {
+    log.info(`${parked.list().length} task(s) waiting on quota`);
+  }
+  parked.restore();
+
   const agents = config.agents.map(agentLabel).join(", ") || "none detected";
   log.banner({
     version: PROTOCOL_VERSION,
@@ -711,6 +755,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   return {
     async stop() {
       approvals.rejectAll();
+      parked.stopAll();
       terminals.closeAll();
       keepAwake.stop();
       relay?.stop();
