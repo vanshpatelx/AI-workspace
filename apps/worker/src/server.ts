@@ -23,7 +23,7 @@ import { SessionStore } from "./session.js";
 import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
 import { WorkspaceRegistry } from "./workspaces.js";
-import { detectPreviewServers } from "./preview.js";
+import { detectPreviewServers, reloadMetro } from "./preview.js";
 import { discoverProjects } from "./discovery.js";
 import { ParkedTasks } from "./parked.js";
 import { ScheduledPrompts } from "./schedule.js";
@@ -716,6 +716,20 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               log.info(`parked task ${msg.taskId} cancelled`);
               server.broadcast({ type: "tasks.parked", tasks: parked.list() });
             }
+            break;
+          case "preview.reload":
+            reloadMetro(msg.port)
+              .then((error) => {
+                if (!error) log.preview(1);
+                conn.send({ type: "preview.reloaded", requestId: msg.requestId, error });
+              })
+              .catch((err: Error) =>
+                conn.send({
+                  type: "preview.reloaded",
+                  requestId: msg.requestId,
+                  error: err.message,
+                }),
+              );
             break;
           case "discover.projects":
             discoverProjects()
