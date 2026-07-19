@@ -24,6 +24,7 @@ import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers } from "./preview.js";
+import { discoverProjects } from "./discovery.js";
 import { RelayLink } from "./relay-link.js";
 import { log } from "./log.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
@@ -606,6 +607,34 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               });
             }
             break;
+          case "discover.projects":
+            discoverProjects()
+              .then((projects) => {
+                log.info(`discovered ${projects.length} past project(s)`);
+                conn.send({ type: "discover.result", requestId: msg.requestId, projects });
+              })
+              .catch((err: Error) =>
+                conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+              );
+            break;
+          case "session.adopt": {
+            // Bind a new local session to an existing agent conversation, so
+            // the next message resumes it with all of its context.
+            const sessionId = `s_${Math.random().toString(36).slice(2, 10)}`;
+            const agent = defaultAgent ?? "claude-code";
+            sessions.ensure(sessionId, msg.workspaceId, agent, Date.now());
+            sessions.setNativeSession(sessionId, msg.nativeSessionId, Date.now());
+            workspaces.addSession(msg.workspaceId, sessionId);
+            log.info(`adopted past session ${msg.nativeSessionId.slice(0, 8)}`);
+            conn.send({
+              type: "session.created",
+              requestId: msg.requestId,
+              workspaceId: msg.workspaceId,
+              sessionId,
+            });
+            void broadcastState();
+            break;
+          }
           case "preview.scan":
             detectPreviewServers(config.port)
               .then((servers) => {

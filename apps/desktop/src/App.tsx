@@ -38,6 +38,7 @@ import { ToolCall } from "./components/ToolCall.js";
 import { UsageBar } from "./components/UsageBar.js";
 import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
 import { LiveActivity } from "./components/LiveActivity.js";
+import { RecentProjects } from "./components/RecentProjects.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
@@ -222,6 +223,32 @@ export function App() {
               onOpen={(path) => openWorkspace(t.url, path)}
               onCloseWorkspace={(workspaceId) => closeWorkspace(t.url, workspaceId)}
               onRemove={() => persist(targets.filter((x) => x.url !== t.url))}
+            />
+          ))}
+
+          {targets.map((t) => (
+            <RecentProjects
+              key={`recent-${t.url}`}
+              connected={workers[t.url]?.connection === "connected"}
+              openPaths={(workers[t.url]?.workspaces ?? []).map((w) => w.path)}
+              onDiscover={() => api.discover.projects(t.url)}
+              onOpenProject={async (path) => {
+                const ws = await openWorkspace(t.url, path);
+                setSelection({ url: t.url, workspaceId: ws.workspaceId, sessionId: null });
+              }}
+              onResumeSession={async (path, session) => {
+                // Open the project, then bind a session to the old
+                // conversation so the next message continues it.
+                const ws = await openWorkspace(t.url, path);
+                const sessionId = await api.discover.adopt(
+                  t.url,
+                  ws.workspaceId,
+                  session.sessionId,
+                  session.title,
+                );
+                setSelection({ url: t.url, workspaceId: ws.workspaceId, sessionId });
+                setTab("chat");
+              }}
             />
           ))}
 

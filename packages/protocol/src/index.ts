@@ -85,6 +85,28 @@ export interface FileEntry {
   size: number;
 }
 
+/** A past agent conversation found on the Worker's machine. */
+export interface DiscoveredSession {
+  /** The agent's own session id — what `--resume` accepts. */
+  sessionId: string;
+  /** Agent-generated title, when the transcript has one. */
+  title: string | null;
+  firstPrompt: string | null;
+  messageCount: number;
+  /** Counts are a floor: only the head of a large transcript is read. */
+  truncated: boolean;
+  updatedAt: number;
+  sizeBytes: number;
+}
+
+/** A directory the agent has worked in before, with its past conversations. */
+export interface DiscoveredProject {
+  path: string;
+  name: string;
+  sessions: DiscoveredSession[];
+  updatedAt: number;
+}
+
 /** What a turn cost, and how much of the context window it occupies. */
 export interface TurnUsage {
   inputTokens: number;
@@ -163,7 +185,16 @@ export type ClientMessage =
   | { type: "terminal.close"; terminalId: string }
   | { type: "fs.list"; requestId: string; workspaceId: string; path: string }
   | { type: "fs.read"; requestId: string; workspaceId: string; path: string }
-  | { type: "preview.scan"; requestId: string };
+  | { type: "preview.scan"; requestId: string }
+  | { type: "discover.projects"; requestId: string }
+  | {
+      /** Continue a conversation the agent had before, in this workspace. */
+      type: "session.adopt";
+      requestId: string;
+      workspaceId: string;
+      nativeSessionId: string;
+      title: string | null;
+    };
 
 /** Worker -> Desktop */
 export type ServerMessage =
@@ -212,6 +243,7 @@ export type ServerMessage =
        */
       proxyBase: string;
     }
+  | { type: "discover.result"; requestId: string; projects: DiscoveredProject[] }
   | { type: "notification"; notification: WorkerNotification };
 
 export type WireMessage = ClientMessage | ServerMessage;

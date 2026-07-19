@@ -3,6 +3,7 @@ import type {
   ApprovalRequest,
   ClientMessage,
   FileEntry,
+  DiscoveredProject,
   MachineSummary,
   PreviewServer,
   TurnUsage,
@@ -100,6 +101,17 @@ export interface WorkersApi {
   };
   preview: {
     scan: (url: string) => Promise<PreviewListing>;
+  };
+  discover: {
+    /** Past agent conversations found on that machine. */
+    projects: (url: string) => Promise<DiscoveredProject[]>;
+    /** Continue one of them inside a workspace. */
+    adopt: (
+      url: string,
+      workspaceId: string,
+      nativeSessionId: string,
+      title: string | null,
+    ) => Promise<string>;
   };
 }
 
@@ -323,6 +335,12 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               });
               break;
             }
+            case "discover.result": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              pending?.resolve(msg.projects);
+              break;
+            }
             case "preview.list": {
               const pending = fsPending.current.get(msg.requestId);
               fsPending.current.delete(msg.requestId);
@@ -529,6 +547,25 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [request],
   );
 
+  const discover = useMemo(
+    () => ({
+      projects: (url: string) =>
+        request<DiscoveredProject[]>(url, (requestId) => ({
+          type: "discover.projects",
+          requestId,
+        })),
+      adopt: (url: string, workspaceId: string, nativeSessionId: string, title: string | null) =>
+        request<string>(url, (requestId) => ({
+          type: "session.adopt",
+          requestId,
+          workspaceId,
+          nativeSessionId,
+          title,
+        })),
+    }),
+    [request],
+  );
+
   return {
     workers,
     send,
@@ -540,6 +577,7 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     terminal,
     fs,
     preview,
+    discover,
   };
 }
 

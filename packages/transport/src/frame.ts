@@ -35,6 +35,8 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
     case "fs.list":
     case "fs.read":
     case "preview.scan":
+    case "discover.projects":
+    case "session.adopt":
       return true;
     default:
       return false;
