@@ -5,6 +5,7 @@ import type {
   FileEntry,
   DiscoveredProject,
   MachineSummary,
+  ParkedTask,
   PreviewServer,
   TurnUsage,
   ServerMessage,
@@ -77,6 +78,8 @@ export interface WorkerState {
   commands: Record<string, CommandLine[]>;
   /** The agent's current plan, keyed by sessionId. */
   todos: Record<string, TodoItem[]>;
+  /** Turns waiting on a usage limit. */
+  parked: ParkedTask[];
   notices: WorkerNotification[];
 }
 
@@ -88,6 +91,9 @@ export interface WorkersApi {
   send: (url: string, workspaceId: string, sessionId: string, text: string) => void;
   runCommand: (url: string, workspaceId: string, command: string) => void;
   resolveApproval: (url: string, requestId: string, approved: boolean) => void;
+  /** Run parked work immediately, or drop it. */
+  resumeParked: (url: string, taskId: string) => void;
+  cancelParked: (url: string, taskId: string) => void;
   openWorkspace: (url: string, path: string) => Promise<Workspace>;
   closeWorkspace: (url: string, workspaceId: string) => void;
   createSession: (url: string, workspaceId: string) => Promise<string>;
@@ -137,6 +143,7 @@ function emptyState(url: string): WorkerState {
     approvals: [],
     commands: {},
     todos: {},
+    parked: [],
     notices: [],
   };
 }
@@ -389,6 +396,9 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                 },
               }));
               break;
+            case "tasks.parked":
+              patch(target.url, (s) => ({ ...s, parked: msg.tasks }));
+              break;
             case "chat.todos":
               patch(target.url, (s) => ({
                 ...s,
@@ -497,6 +507,16 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [emit],
   );
 
+  const resumeParked = useCallback(
+    (url: string, taskId: string) => emit(url, { type: "task.resumeNow", taskId }),
+    [emit],
+  );
+
+  const cancelParked = useCallback(
+    (url: string, taskId: string) => emit(url, { type: "task.cancel", taskId }),
+    [emit],
+  );
+
   const openWorkspace = useCallback(
     (url: string, path: string) =>
       request<Workspace>(url, (requestId) => ({ type: "workspace.open", requestId, path })),
@@ -601,6 +621,8 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     send,
     runCommand,
     resolveApproval,
+    resumeParked,
+    cancelParked,
     openWorkspace,
     closeWorkspace,
     createSession,

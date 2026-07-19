@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { AgentKind, TodoItem, TurnUsage } from "@ai-workspace/protocol";
 import type { AgentAdapter, AgentTurnInput, AgentTurnResult } from "./types.js";
+import { readRateLimit, looksRateLimited, resumeTime, type RateLimitState } from "../ratelimit.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = join(HERE, "..", "permission-hook.mjs");
@@ -186,6 +187,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // The agent announces its model in the init event; helper models that
       // appear later in modelUsage are background work, not the main turn.
       let mainModel: string | null = null;
+      // Quota state is reported on its own event, before any failure.
+      let rateLimit: RateLimitState | null = null;
       let resumeFailed = false;
       let settled = false;
       const finish = () => {
@@ -224,10 +227,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           const line = buffer.slice(0, nl).trim();
           buffer = buffer.slice(nl + 1);
           if (line) {
-            this.handleEvent(line, handlers, (id) => (sessionId = id), markResumeFailure, {
-              get: () => mainModel,
-              set: (m) => (mainModel = m),
-            });
+            this.handleEvent(
+              line,
+              handlers,
+              (id) => (sessionId = id),
+              markResumeFailure,
+              { get: () => mainModel, set: (m) => (mainModel = m) },
+              { get: () => rateLimit, set: (r) => (rateLimit = r) },
+            );
           }
         }
       });
@@ -244,10 +251,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
       child.on("close", (code) => {
         if (buffer.trim()) {
-          this.handleEvent(buffer.trim(), handlers, (id) => (sessionId = id), markResumeFailure, {
-            get: () => mainModel,
-            set: (m) => (mainModel = m),
-          });
+          this.handleEvent(
+            buffer.trim(),
+            handlers,
+            (id) => (sessionId = id),
+            markResumeFailure,
+            { get: () => mainModel, set: (m) => (mainModel = m) },
+            { get: () => rateLimit, set: (r) => (rateLimit = r) },
+          );
         }
         // stderr carries the resume failure when it happens before any JSON.
         if (isMissingSession(stderr)) markResumeFailure();
@@ -265,6 +276,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     setSession: (id: string) => void,
     onResumeFailure: () => void,
     model: { get: () => string | null; set: (m: string) => void },
+    limit: { get: () => RateLimitState | null; set: (r: RateLimitState) => void },
   ): void {
     let evt: any;
     try {
@@ -276,6 +288,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
     if (typeof evt?.session_id === "string") setSession(evt.session_id);
     if (evt?.type === "system" && typeof evt.model === "string") model.set(evt.model);
+    const quota = readRateLimit(evt);
+    if (quota) limit.set(quota);
 
     switch (evt?.type) {
       case "assistant": {
@@ -314,7 +328,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       case "result": {
         const errors: string[] = Array.isArray(evt.errors) ? evt.errors : [];
         if (errors.some(isMissingSession)) onResumeFailure();
-        if (evt.is_error && typeof evt.result === "string") {
+        const errorText = [
+          typeof evt.result === "string" ? evt.result : "",
+          ...errors,
+        ].join(" ");
+
+        if (
+          looksRateLimited({ state: limit.get(), errorText, isError: Boolean(evt.is_error) })
+        ) {
+          // Not a normal failure: the work is still valid, the quota is not.
+          const state = limit.get();
+          const kind = state?.kind ? `${state.kind.replace(/_/g, "-")} usage limit` : "usage limit";
+          handlers.onRateLimited?.(resumeTime(state), kind);
+        } else if (evt.is_error && typeof evt.result === "string") {
           handlers.onError(evt.result);
         }
         handlers.onUsage?.(readUsage(evt, model.get()));

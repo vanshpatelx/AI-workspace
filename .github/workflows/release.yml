@@ -29,6 +29,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build all packages
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm -r build
 
       # electron-builder names artifacts from package.json, so without this the

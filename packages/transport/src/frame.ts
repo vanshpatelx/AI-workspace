@@ -38,6 +38,8 @@ export function isClientMessage(msg: WireMessage): msg is ClientMessage {
     case "preview.scan":
     case "discover.projects":
     case "session.adopt":
+    case "task.resumeNow":
+    case "task.cancel":
       return true;
     default:
       return false;
