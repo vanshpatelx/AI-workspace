@@ -8,6 +8,7 @@ import type {
   PreviewServer,
   TurnUsage,
   ServerMessage,
+  TodoItem,
   WorkerNotification,
   Workspace,
 } from "@ai-workspace/protocol";
@@ -74,6 +75,8 @@ export interface WorkerState {
   approvals: ApprovalRequest[];
   /** Command history keyed by workspaceId. */
   commands: Record<string, CommandLine[]>;
+  /** The agent's current plan, keyed by sessionId. */
+  todos: Record<string, TodoItem[]>;
   notices: WorkerNotification[];
 }
 
@@ -133,6 +136,7 @@ function emptyState(url: string): WorkerState {
     messages: {},
     approvals: [],
     commands: {},
+    todos: {},
     notices: [],
   };
 }
@@ -383,6 +387,12 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                       : m,
                   ),
                 },
+              }));
+              break;
+            case "chat.todos":
+              patch(target.url, (s) => ({
+                ...s,
+                todos: { ...s.todos, [msg.sessionId]: msg.todos },
               }));
               break;
             case "chat.usage":

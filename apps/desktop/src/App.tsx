@@ -42,6 +42,8 @@ import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
 import { LiveActivity } from "./components/LiveActivity.js";
 import { RecentProjects } from "./components/RecentProjects.js";
 import { EditorPanel, type OpenFile } from "./components/EditorPanel.js";
+import { TodoQueue } from "./components/TodoQueue.js";
+import { StepGroup } from "./components/StepGroup.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
@@ -430,16 +432,26 @@ export function App() {
                     agent runs in that directory.
                   </p>
                 ) : (
-                  messages.map((m, i) => (
-                    <Turn
-                      key={i}
-                      message={m}
-                      streaming={i === messages.length - 1 && isWorking}
-                      activity={activityLabel}
-                    />
-                  ))
+                  groupIntoSteps(messages).map((entry, i) =>
+                    entry.kind === "step" ? (
+                      <StepGroup key={i} index={entry.index} tools={entry.tools} />
+                    ) : (
+                      <Turn
+                        key={i}
+                        message={entry.message}
+                        streaming={entry.isLast && isWorking}
+                        activity={activityLabel}
+                      />
+                    ),
+                  )
                 )}
               </div>
+
+              {activeSessionId && (active.worker.todos[activeSessionId]?.length ?? 0) > 0 && (
+                <div className="border-t px-4 py-2">
+                  <TodoQueue todos={active.worker.todos[activeSessionId] ?? []} />
+                </div>
+              )}
 
               {inlineApprovals.length > 0 && active && (
                 <div className="border-t px-4 py-2">
@@ -601,6 +613,39 @@ function ConnBadge({ connection, status }: { connection: ConnectionState; status
   if (connection !== "connected") return <Badge variant="offline">{connection}</Badge>;
   if (status === "busy") return <Badge variant="busy">busy</Badge>;
   return <Badge variant="success">online</Badge>;
+}
+
+type Rendered =
+  | { kind: "step"; index: number; tools: ChatMessage[] }
+  | { kind: "turn"; message: ChatMessage; isLast: boolean };
+
+/**
+ * Collapse consecutive tool calls into numbered steps.
+ *
+ * Text and actions interleave, so a step is simply an unbroken run of tool
+ * turns; anything else passes through untouched.
+ */
+function groupIntoSteps(messages: ChatMessage[]): Rendered[] {
+  const out: Rendered[] = [];
+  let run: ChatMessage[] = [];
+  let step = 0;
+
+  const flush = () => {
+    if (run.length === 0) return;
+    out.push({ kind: "step", index: ++step, tools: run });
+    run = [];
+  };
+
+  messages.forEach((message, i) => {
+    if (message.role === "tool") {
+      run.push(message);
+      return;
+    }
+    flush();
+    out.push({ kind: "turn", message, isLast: i === messages.length - 1 });
+  });
+  flush();
+  return out;
 }
 
 /**

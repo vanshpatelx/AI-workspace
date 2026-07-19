@@ -1,4 +1,4 @@
-import type { AgentKind, TurnUsage } from "@ai-workspace/protocol";
+import type { AgentKind, TodoItem, TurnUsage } from "@ai-workspace/protocol";
 
 export interface AgentTurnHandlers {
   /** Streamed assistant output for this turn. */
@@ -8,6 +8,8 @@ export interface AgentTurnHandlers {
   /** The agent used a tool — reported separately so the UI can show the
    *  action rather than burying it in the reply text. */
   onTool?(toolId: string, tool: string, target: string): void;
+  /** The agent's plan, whenever it writes or updates one. */
+  onTodos?(todos: TodoItem[]): void;
   /** What that tool returned, matched to the call by `toolId`. */
   onToolResult?(toolId: string, output: string, isError: boolean): void;
   /** Token, cost and timing accounting once the turn completes. */

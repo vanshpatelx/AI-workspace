@@ -214,6 +214,9 @@ export function startWorker(config: WorkerConfig): RunningWorker {
             });
             conn.send({ type: "chat.tool", sessionId, toolId, tool, target });
           },
+          onTodos: (todos) => {
+            conn.send({ type: "chat.todos", sessionId, todos });
+          },
           onToolResult: (toolId, output, isError) => {
             sessions.attachToolResult(sessionId, toolId, output, isError);
             conn.send({ type: "chat.tool.result", sessionId, toolId, output, isError });

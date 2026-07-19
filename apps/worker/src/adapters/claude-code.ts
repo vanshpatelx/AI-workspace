@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { AgentKind, TurnUsage } from "@ai-workspace/protocol";
+import type { AgentKind, TodoItem, TurnUsage } from "@ai-workspace/protocol";
 import type { AgentAdapter, AgentTurnInput, AgentTurnResult } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -10,6 +10,21 @@ const HOOK_PATH = join(HERE, "..", "permission-hook.mjs");
 /** The agent reports an unresolvable --resume target with this message. */
 function isMissingSession(text: string): boolean {
   return /No conversation found with session ID/i.test(text);
+}
+
+/** The agent keeps its plan in TodoWrite calls; pull it out verbatim. */
+function readTodos(input: unknown): TodoItem[] {
+  const raw = (input as { todos?: unknown })?.todos;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((t) => {
+    const item = t as Record<string, unknown>;
+    if (typeof item?.content !== "string") return [];
+    const status =
+      item.status === "in_progress" || item.status === "completed" ? item.status : "pending";
+    const todo: TodoItem = { content: item.content, status };
+    if (typeof item.activeForm === "string") todo.activeForm = item.activeForm;
+    return [todo];
+  });
 }
 
 /** Tool output arrives as a string or as content blocks; flatten to text. */
@@ -273,6 +288,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           } else if (block?.type === "text" && typeof block.text === "string") {
             handlers.onDelta(block.text);
           } else if (block?.type === "tool_use" && typeof block.name === "string") {
+            // The plan is more useful as a checklist than as another tool row.
+            if (block.name === "TodoWrite") {
+              const todos = readTodos(block.input);
+              if (todos.length) handlers.onTodos?.(todos);
+            }
             handlers.onTool?.(String(block.id ?? ""), block.name, describeToolTarget(block.input));
           }
         }

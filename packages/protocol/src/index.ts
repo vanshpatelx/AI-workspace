@@ -85,6 +85,14 @@ export interface FileEntry {
   size: number;
 }
 
+/** One item in the agent's working plan. */
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  /** Present-tense label the agent uses while the item is running. */
+  activeForm?: string;
+}
+
 /** A past agent conversation found on the Worker's machine. */
 export interface DiscoveredSession {
   /** The agent's own session id — what `--resume` accepts. */
@@ -223,6 +231,7 @@ export type ServerMessage =
       isError: boolean;
     }
   | { type: "chat.usage"; sessionId: string; usage: TurnUsage }
+  | { type: "chat.todos"; sessionId: string; todos: TodoItem[] }
   | { type: "approval.request"; request: ApprovalRequest }
   | { type: "approval.resolved"; requestId: string; approved: boolean }
   | { type: "command.result"; commandId: string; code: number | null; output: string; approved: boolean }
