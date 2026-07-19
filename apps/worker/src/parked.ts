@@ -2,6 +2,7 @@ import { join, dirname } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { ParkedTask } from "@ai-workspace/protocol";
 import { configDir } from "./config.js";
+import { fireAt, type DeferredTimer } from "./deferred.js";
 
 /**
  * Work the agent could not finish because the usage quota ran out.
@@ -13,7 +14,7 @@ import { configDir } from "./config.js";
  */
 export class ParkedTasks {
   private readonly tasks = new Map<string, ParkedTask>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
+  private readonly timers = new Map<string, DeferredTimer>();
   private seq = 0;
 
   constructor(
@@ -55,30 +56,13 @@ export class ParkedTasks {
     return parked;
   }
 
-  /**
-   * Arm the timer for a task.
-   *
-   * setTimeout is capped at ~24.8 days and, more importantly, does not advance
-   * while the machine sleeps — so long waits are re-checked in chunks rather
-   * than trusted to fire once.
-   */
+  /** Arm the deadline for a task; see deferred.ts for why this is not a plain setTimeout. */
   private schedule(task: ParkedTask): void {
     this.clearTimer(task.id);
-    const MAX_STEP = 5 * 60 * 1000;
-    const delay = Math.max(0, task.resumeAt - Date.now());
-
-    if (delay === 0) {
-      this.fire(task.id);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const current = this.tasks.get(task.id);
-      if (!current) return;
-      if (Date.now() >= current.resumeAt) this.fire(task.id);
-      else this.schedule(current); // woke early, or the clock jumped
-    }, Math.min(delay, MAX_STEP));
-    timer.unref?.();
-    this.timers.set(task.id, timer);
+    this.timers.set(
+      task.id,
+      fireAt(task.resumeAt, () => this.fire(task.id)),
+    );
   }
 
   private fire(id: string): void {
@@ -114,8 +98,7 @@ export class ParkedTasks {
   }
 
   private clearTimer(id: string): void {
-    const timer = this.timers.get(id);
-    if (timer) clearTimeout(timer);
+    this.timers.get(id)?.cancel();
     this.timers.delete(id);
   }
 

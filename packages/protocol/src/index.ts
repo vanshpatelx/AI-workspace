@@ -85,6 +85,18 @@ export interface FileEntry {
   size: number;
 }
 
+/** A prompt queued to run against a workspace at a chosen time. */
+export interface ScheduledPrompt {
+  id: string;
+  workspaceId: string;
+  /** Existing session to continue, or null to start a fresh one. */
+  sessionId: string | null;
+  text: string;
+  /** Epoch ms. */
+  runAt: number;
+  createdAt: number;
+}
+
 /** A turn the agent could not finish because the usage quota ran out. */
 export interface ParkedTask {
   id: string;
@@ -219,6 +231,16 @@ export type ClientMessage =
   | { type: "task.resumeNow"; taskId: string }
   | { type: "task.cancel"; taskId: string }
   | {
+      type: "schedule.add";
+      requestId: string;
+      workspaceId: string;
+      sessionId: string | null;
+      text: string;
+      runAt: number;
+    }
+  | { type: "schedule.cancel"; promptId: string }
+  | { type: "schedule.runNow"; promptId: string }
+  | {
       /** Continue a conversation the agent had before, in this workspace. */
       type: "session.adopt";
       requestId: string;
@@ -278,6 +300,7 @@ export type ServerMessage =
     }
   | { type: "discover.result"; requestId: string; projects: DiscoveredProject[] }
   | { type: "tasks.parked"; tasks: ParkedTask[] }
+  | { type: "schedule.list"; prompts: ScheduledPrompt[] }
   | { type: "notification"; notification: WorkerNotification };
 
 export type WireMessage = ClientMessage | ServerMessage;
