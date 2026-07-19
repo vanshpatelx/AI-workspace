@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, unlink, access } from "node:fs/promises";
+import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MirroredDevice } from "@ai-workspace/protocol";
 
 const run = promisify(execFile);
+const { X_OK } = constants;
 
 /**
  * Mirroring a running simulator into the Desktop app.
@@ -24,36 +26,75 @@ const run = promisify(execFile);
  * a reason the UI can show, rather than silently swallowing taps.
  */
 
+/**
+ * How to get iOS taps working.
+ *
+ * The obvious `pip install fb-idb` fails twice over on a current Mac, so it is
+ * not what we tell people. Homebrew's Python is marked externally-managed
+ * (PEP 668), which refuses a bare pip install outright; and idb calls
+ * `asyncio.get_event_loop()` at startup, which stopped implicitly creating a
+ * loop in Python 3.12 and raises on 3.13/3.14 — so an install that appears to
+ * succeed produces a traceback on every command. pipx sidesteps the first by
+ * building an isolated venv, and pinning the interpreter sidesteps the second.
+ */
+const IDB_INSTALL_HINT =
+  "Install idb to tap: brew install facebook/fb/idb-companion && pipx install --python python3.12 fb-idb";
+
 /** Frames arrive at roughly 3-4fps, so anything slower than this is a stall. */
 const CAPTURE_TIMEOUT_MS = 8000;
 const LIST_TIMEOUT_MS = 15_000;
 const INPUT_TIMEOUT_MS = 5000;
 
-async function has(tool: string): Promise<boolean> {
+/**
+ * Where these tools land when PATH does not mention them.
+ *
+ * The Worker usually runs as a launchd agent, whose PATH is whatever the shell
+ * that installed the service happened to have — frozen at that moment. Install
+ * the service first and pipx second and `which idb` finds nothing forever,
+ * leaving the panel insisting you install something that is already there.
+ * Checking the standard locations directly makes detection independent of the
+ * order those two things happened in.
+ */
+const FALLBACK_BINS = [
+  `${process.env.HOME ?? ""}/.local/bin`, // pipx
+  "/opt/homebrew/bin", // Homebrew, Apple silicon
+  "/usr/local/bin", // Homebrew, Intel
+];
+
+/** Absolute path to a tool, or null when it genuinely is not installed. */
+async function resolveTool(tool: string): Promise<string | null> {
   try {
     // `which` rather than a shell builtin: passing a tool name through a shell
     // would make this injectable, and there is no reason to spawn one.
-    await run("which", [tool], { timeout: 3000 });
-    return true;
+    const { stdout } = await run("which", [tool], { timeout: 3000 });
+    const found = stdout.trim().split("\n")[0];
+    if (found) return found;
   } catch {
-    return false;
+    // Not on PATH — fall through and look where installers actually put it.
   }
+  for (const dir of FALLBACK_BINS) {
+    const candidate = join(dir, tool);
+    try {
+      await access(candidate, X_OK);
+      return candidate;
+    } catch {
+      // Not here either; keep looking.
+    }
+  }
+  return null;
 }
 
-/** Cached because probing the PATH on every frame would dominate capture cost. */
-let toolCache: { idb: boolean; adb: boolean; at: number } | null = null;
-const TOOL_CACHE_MS = 30_000;
-
-async function tools(now = Date.now()): Promise<{ idb: boolean; adb: boolean }> {
-  if (toolCache && now - toolCache.at < TOOL_CACHE_MS) return toolCache;
-  const [idb, adb] = await Promise.all([has("idb"), has("adb")]);
-  toolCache = { idb, adb, at: now };
-  return toolCache;
-}
-
-/** Forget probed tools so a fresh `brew install` is picked up without a restart. */
-export function forgetTools(): void {
-  toolCache = null;
+/**
+ * Probed on every scan rather than cached.
+ *
+ * Caching this saved two lookups on a user-initiated action and cost something
+ * far more valuable: installing idb and pressing rescan still showed the device
+ * as view-only, because the answer had been decided before the tool existed.
+ * Detection that lags the thing it detects is worse than no detection.
+ */
+async function tools(): Promise<{ idb: string | null; adb: string | null }> {
+  const [idb, adb] = await Promise.all([resolveTool("idb"), resolveTool("adb")]);
+  return { idb, adb };
 }
 
 interface SimctlDevice {
@@ -64,7 +105,7 @@ interface SimctlDevice {
 }
 
 /** Booted iOS simulators. Empty (never throws) when Xcode is absent. */
-async function listIos(idbPresent: boolean): Promise<MirroredDevice[]> {
+async function listIos(idbPath: string | null): Promise<MirroredDevice[]> {
   try {
     const { stdout } = await run("xcrun", ["simctl", "list", "devices", "booted", "-j"], {
       timeout: LIST_TIMEOUT_MS,
@@ -82,10 +123,8 @@ async function listIos(idbPresent: boolean): Promise<MirroredDevice[]> {
           // "com.apple.CoreSimulator.SimRuntime.iOS-18-6" -> "iOS 18.6":
           // the first dash separates the name, the rest are version dots.
           runtime: runtime.split(".").pop()?.replace("-", " ").replace(/-/g, ".") ?? "iOS",
-          canInput: idbPresent,
-          inputHint: idbPresent
-            ? undefined
-            : "Install idb to tap: brew install idb-companion && pip install fb-idb",
+          canInput: idbPath !== null,
+          inputHint: idbPath ? undefined : IDB_INSTALL_HINT,
         });
       }
     }
@@ -96,10 +135,10 @@ async function listIos(idbPresent: boolean): Promise<MirroredDevice[]> {
 }
 
 /** Attached Android devices and emulators. Empty when adb is absent. */
-async function listAndroid(adbPresent: boolean): Promise<MirroredDevice[]> {
-  if (!adbPresent) return [];
+async function listAndroid(adbPath: string | null): Promise<MirroredDevice[]> {
+  if (!adbPath) return [];
   try {
-    const { stdout } = await run("adb", ["devices", "-l"], { timeout: LIST_TIMEOUT_MS });
+    const { stdout } = await run(adbPath, ["devices", "-l"], { timeout: LIST_TIMEOUT_MS });
     const out: MirroredDevice[] = [];
     for (const line of stdout.split("\n").slice(1)) {
       const [serial, state] = line.trim().split(/\s+/);
@@ -148,7 +187,8 @@ export interface Frame {
  */
 export async function capture(device: MirroredDevice): Promise<Frame> {
   if (device.platform === "android") {
-    const { stdout } = await run("adb", ["-s", device.id, "exec-out", "screencap", "-p"], {
+    const adb = (await resolveTool("adb")) ?? "adb";
+    const { stdout } = await run(adb, ["-s", device.id, "exec-out", "screencap", "-p"], {
       timeout: CAPTURE_TIMEOUT_MS,
       encoding: "buffer",
       maxBuffer: 32 * 1024 * 1024,
@@ -230,7 +270,8 @@ export function resolveTap(
 /** Display scale for a simulator, so pixel frames map onto point coordinates. */
 async function iosScale(udid: string): Promise<number> {
   try {
-    const { stdout } = await run("idb", ["describe", "--udid", udid, "--json"], {
+    const idb = (await resolveTool("idb")) ?? "idb";
+    const { stdout } = await run(idb, ["describe", "--udid", udid, "--json"], {
       timeout: INPUT_TIMEOUT_MS,
     });
     const density = (JSON.parse(stdout) as { screen_dimensions?: { density?: number } })
@@ -256,13 +297,13 @@ export async function tap(
   try {
     if (device.platform === "android") {
       const { x, y } = resolveTap(device, fx, fy, frame, 1);
-      await run("adb", ["-s", device.id, "shell", "input", "tap", String(x), String(y)], {
+      await run((await resolveTool("adb")) ?? "adb", ["-s", device.id, "shell", "input", "tap", String(x), String(y)], {
         timeout: INPUT_TIMEOUT_MS,
       });
       return null;
     }
     const { x, y } = resolveTap(device, fx, fy, frame, await iosScale(device.id));
-    await run("idb", ["ui", "tap", "--udid", device.id, String(x), String(y)], {
+    await run((await resolveTool("idb")) ?? "idb", ["ui", "tap", "--udid", device.id, String(x), String(y)], {
       timeout: INPUT_TIMEOUT_MS,
     });
     return null;
@@ -278,12 +319,14 @@ export async function typeText(device: MirroredDevice, text: string): Promise<st
   try {
     if (device.platform === "android") {
       // `input text` reads spaces as argument separators.
-      await run("adb", ["-s", device.id, "shell", "input", "text", text.replace(/ /g, "%s")], {
+      await run((await resolveTool("adb")) ?? "adb", ["-s", device.id, "shell", "input", "text", text.replace(/ /g, "%s")], {
         timeout: INPUT_TIMEOUT_MS,
       });
       return null;
     }
-    await run("idb", ["ui", "text", "--udid", device.id, text], { timeout: INPUT_TIMEOUT_MS });
+    await run((await resolveTool("idb")) ?? "idb", ["ui", "text", "--udid", device.id, text], {
+      timeout: INPUT_TIMEOUT_MS,
+    });
     return null;
   } catch (err) {
     return `text failed: ${(err as Error).message}`;
@@ -299,7 +342,7 @@ export async function pressKey(
   try {
     if (device.platform === "android") {
       const code = { home: "HOME", back: "BACK", enter: "ENTER", backspace: "DEL" }[key];
-      await run("adb", ["-s", device.id, "shell", "input", "keyevent", `KEYCODE_${code}`], {
+      await run((await resolveTool("adb")) ?? "adb", ["-s", device.id, "shell", "input", "keyevent", `KEYCODE_${code}`], {
         timeout: INPUT_TIMEOUT_MS,
       });
       return null;
@@ -307,11 +350,15 @@ export async function pressKey(
     // iOS has no Back button; the rest map onto idb's named buttons and keys.
     if (key === "back") return "iOS has no back button";
     if (key === "home") {
-      await run("idb", ["ui", "button", "--udid", device.id, "HOME"], { timeout: INPUT_TIMEOUT_MS });
+      await run((await resolveTool("idb")) ?? "idb", ["ui", "button", "--udid", device.id, "HOME"], {
+        timeout: INPUT_TIMEOUT_MS,
+      });
       return null;
     }
     const keycode = key === "enter" ? "40" : "42"; // HID usage codes: Return, Backspace
-    await run("idb", ["ui", "key", "--udid", device.id, keycode], { timeout: INPUT_TIMEOUT_MS });
+    await run((await resolveTool("idb")) ?? "idb", ["ui", "key", "--udid", device.id, keycode], {
+      timeout: INPUT_TIMEOUT_MS,
+    });
     return null;
   } catch (err) {
     return `key failed: ${(err as Error).message}`;

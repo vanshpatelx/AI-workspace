@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { History, FolderOpen, MessageSquare, ChevronRight, RefreshCw } from "lucide-react";
 import type { DiscoveredProject, DiscoveredSession } from "@ai-workspace/protocol";
 import { Button } from "./ui/button.js";
@@ -40,19 +40,34 @@ export function RecentProjects({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Held in a ref so scanning does not depend on the callback's identity.
+   *
+   * Callers pass this as an inline arrow, which is a new function on every
+   * render of the parent. Depending on it directly made the scan effect re-fire
+   * on every render — and since scanning sets state, that render caused the next
+   * one. A disk walk of every past project ran several times a second, on every
+   * keystroke and every streamed chat token.
+   */
+  const discoverRef = useRef(onDiscover);
+  useEffect(() => {
+    discoverRef.current = onDiscover;
+  });
+
   const scan = useCallback(async () => {
     if (!connected) return;
     setBusy(true);
     setError(null);
     try {
-      setProjects(await onDiscover());
+      setProjects(await discoverRef.current());
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [connected, onDiscover]);
+  }, [connected]);
 
+  // Scans when the connection comes up, and when the user asks — not on render.
   useEffect(() => {
     void scan();
   }, [scan]);

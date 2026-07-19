@@ -93,6 +93,39 @@ Worker address for the UI.
 > Workspace packages resolve from `dist/`, so run `pnpm build:packages`
 > after changing `packages/*`.
 
+## Mirroring a simulator
+
+The **Device** tab streams a running iOS Simulator or Android emulator from the
+Worker's machine and lets you drive it. A dev server can be proxied because it
+speaks HTTP; a simulator cannot, so frames are captured and input is injected.
+
+Seeing the screen needs nothing beyond Xcode (iOS) or `adb` (Android). Tapping
+is where the platforms diverge:
+
+| | see screen | tap / type |
+| --- | --- | --- |
+| **Android** | `adb` | same `adb` binary — nothing extra |
+| **iOS** | works out of the box | needs [idb](https://fbidb.io) |
+
+Apple ships no tap injection, so iOS needs Meta's `idb`. Until it is installed
+the device is marked view-only and the panel shows the command; rescan once it
+is in place.
+
+```sh
+brew install facebook/fb/idb-companion
+pipx install --python python3.12 fb-idb
+```
+
+Both details matter. `pip install fb-idb` fails on a current Mac because
+Homebrew's Python is externally-managed (PEP 668), and `idb` itself calls
+`asyncio.get_event_loop()` at startup, which raises on Python 3.13+ — so an
+install that appears to succeed then throws a traceback on every command. pipx
+gives it an isolated environment, and pinning 3.12 keeps it running.
+
+Expect roughly **10fps** — enough to tap through a flow and check a layout, not
+enough for animations or gestures. iOS Simulator also needs a logged-in desktop
+session: it will not launch over a bare SSH connection, though Android will.
+
 ## Remote access
 
 Direct transports (Tailscale, WireGuard, LAN, SSH tunnel) need no extra
