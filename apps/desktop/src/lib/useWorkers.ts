@@ -7,7 +7,6 @@ import type {
   MachineSummary,
   ParkedTask,
   PreviewServer,
-  MirroredDevice,
   ScheduledPrompt,
   TurnUsage,
   ServerMessage,
@@ -33,14 +32,6 @@ export interface PreviewListing {
   /** Absolute proxy base, already resolved against the Worker's host. */
   proxyBase: string;
   /** Pairing code — the proxy requires it, same as the transport. */
-  token: string;
-}
-
-export interface DeviceListing {
-  devices: MirroredDevice[];
-  /** Absolute stream base, already resolved against the Worker's host. */
-  streamBase: string;
-  /** Pairing code — the frame stream requires it, same as the transport. */
   token: string;
 }
 
@@ -138,17 +129,6 @@ export interface WorkersApi {
   };
   preview: {
     scan: (url: string) => Promise<PreviewListing>;
-  };
-  devices: {
-    scan: (url: string) => Promise<DeviceListing>;
-    /** Tap at a fraction (0..1) of the frame; resolves to an error, or null. */
-    tap: (url: string, deviceId: string, x: number, y: number) => Promise<string | null>;
-    text: (url: string, deviceId: string, text: string) => Promise<string | null>;
-    key: (
-      url: string,
-      deviceId: string,
-      key: "home" | "back" | "enter" | "backspace",
-    ) => Promise<string | null>;
   };
   discover: {
     /** Past agent conversations found on that machine. */
@@ -411,26 +391,6 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               });
               break;
             }
-            case "device.list": {
-              const pending = fsPending.current.get(msg.requestId);
-              fsPending.current.delete(msg.requestId);
-              // streamBase is host-relative (":4502/device"), same as previews.
-              const host = new URL(target.url).hostname;
-              pending?.resolve({
-                devices: msg.devices,
-                streamBase: `http://${host}${msg.streamBase}`,
-                token: target.token,
-              });
-              break;
-            }
-            case "device.input": {
-              const pending = fsPending.current.get(msg.requestId);
-              fsPending.current.delete(msg.requestId);
-              // A rejected tap is a message to show, not a thrown error — the
-              // usual cause is simply that idb is not installed.
-              pending?.resolve(msg.error);
-              break;
-            }
             case "fs.error": {
               const pending = fsPending.current.get(msg.requestId);
               fsPending.current.delete(msg.requestId);
@@ -677,32 +637,6 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [request],
   );
 
-  const devices = useMemo(
-    () => ({
-      scan: (url: string) =>
-        request<DeviceListing>(url, (requestId) => ({ type: "device.scan", requestId })),
-      /** x/y are fractions (0..1) of the displayed frame; the Worker scales them. */
-      tap: (url: string, deviceId: string, x: number, y: number) =>
-        request<string | null>(url, (requestId) => ({
-          type: "device.tap",
-          requestId,
-          deviceId,
-          x,
-          y,
-        })),
-      text: (url: string, deviceId: string, text: string) =>
-        request<string | null>(url, (requestId) => ({
-          type: "device.text",
-          requestId,
-          deviceId,
-          text,
-        })),
-      key: (url: string, deviceId: string, key: "home" | "back" | "enter" | "backspace") =>
-        request<string | null>(url, (requestId) => ({ type: "device.key", requestId, deviceId, key })),
-    }),
-    [request],
-  );
-
   const discover = useMemo(
     () => ({
       projects: (url: string) =>
@@ -738,7 +672,6 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     terminal,
     fs,
     preview,
-    devices,
     discover,
   };
 }
