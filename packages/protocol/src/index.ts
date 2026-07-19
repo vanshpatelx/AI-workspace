@@ -185,6 +185,13 @@ export type ClientMessage =
   | { type: "terminal.close"; terminalId: string }
   | { type: "fs.list"; requestId: string; workspaceId: string; path: string }
   | { type: "fs.read"; requestId: string; workspaceId: string; path: string }
+  | {
+      type: "fs.write";
+      requestId: string;
+      workspaceId: string;
+      path: string;
+      content: string;
+    }
   | { type: "preview.scan"; requestId: string }
   | { type: "discover.projects"; requestId: string }
   | {
@@ -231,6 +238,7 @@ export type ServerMessage =
       base64: boolean;
       content: string;
     }
+  | { type: "fs.written"; requestId: string; path: string; bytes: number }
   | { type: "fs.error"; requestId: string; message: string }
   | {
       type: "preview.list";

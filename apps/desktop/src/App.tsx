@@ -15,6 +15,7 @@ import {
   FolderOpen,
   GitBranch,
   Sparkles,
+  FileCode,
 } from "lucide-react";
 import type { ApprovalRequest, Workspace } from "@ai-workspace/protocol";
 import {
@@ -32,6 +33,7 @@ import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { FilesPanel } from "./components/FilesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
+import "./lib/monaco.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
@@ -39,6 +41,7 @@ import { UsageBar } from "./components/UsageBar.js";
 import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
 import { LiveActivity } from "./components/LiveActivity.js";
 import { RecentProjects } from "./components/RecentProjects.js";
+import { EditorPanel, type OpenFile } from "./components/EditorPanel.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
@@ -48,6 +51,7 @@ const TABS = [
   { id: "chat", label: "Chat", Icon: Bot },
   { id: "terminal", label: "Terminal", Icon: Terminal },
   { id: "files", label: "Files", Icon: FolderTree },
+  { id: "editor", label: "Editor", Icon: FileCode },
   { id: "preview", label: "Preview", Icon: Globe },
 ] as const;
 
@@ -72,7 +76,10 @@ export function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<"chat" | "terminal" | "files" | "preview">("chat");
+  const [tab, setTab] = useState<"chat" | "terminal" | "files" | "editor" | "preview">("chat");
+  /** Files open in the editor, keyed by workspace so tabs follow the project. */
+  const [openFiles, setOpenFiles] = useState<Record<string, OpenFile[]>>({});
+  const [activeFile, setActiveFile] = useState<Record<string, string | null>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const api = useWorkers(targets);
@@ -159,6 +166,21 @@ export function App() {
       />
     );
   }
+
+  const wsKey = active ? `${active.worker.url}:${active.workspace.workspaceId}` : "";
+  const filesOpen = openFiles[wsKey] ?? [];
+
+  /** Open a file in the editor, or focus it if already open. */
+  const openInEditor = (path: string, content: string) => {
+    setOpenFiles((prev) => {
+      const list = prev[wsKey] ?? [];
+      // Reopening keeps any unsaved draft rather than discarding it.
+      if (list.some((f) => f.path === path)) return prev;
+      return { ...prev, [wsKey]: [...list, { path, saved: content, draft: content }] };
+    });
+    setActiveFile((prev) => ({ ...prev, [wsKey]: path }));
+    setTab("editor");
+  };
 
   const connected = active?.worker.connection === "connected";
   // The Worker reports per-workspace activity; pair it with the last tool the
@@ -307,6 +329,38 @@ export function App() {
                 connected={!!connected}
               />
             </div>
+          ) : tab === "editor" ? (
+            <div className="min-h-0 flex-1">
+              <EditorPanel
+                url={active.worker.url}
+                workspaceId={active.workspace.workspaceId}
+                fs={api.fs}
+                connected={!!connected}
+                files={filesOpen}
+                activePath={activeFile[wsKey] ?? filesOpen[0]?.path ?? null}
+                onSelect={(path) => setActiveFile((p) => ({ ...p, [wsKey]: path }))}
+                onClose={(path) =>
+                  setOpenFiles((p) => ({
+                    ...p,
+                    [wsKey]: (p[wsKey] ?? []).filter((f) => f.path !== path),
+                  }))
+                }
+                onChange={(path, draft) =>
+                  setOpenFiles((p) => ({
+                    ...p,
+                    [wsKey]: (p[wsKey] ?? []).map((f) => (f.path === path ? { ...f, draft } : f)),
+                  }))
+                }
+                onSaved={(path, content) =>
+                  setOpenFiles((p) => ({
+                    ...p,
+                    [wsKey]: (p[wsKey] ?? []).map((f) =>
+                      f.path === path ? { ...f, saved: content, draft: content } : f,
+                    ),
+                  }))
+                }
+              />
+            </div>
           ) : tab === "files" ? (
             <div className="min-h-0 flex-1">
               <FilesPanel
@@ -315,6 +369,7 @@ export function App() {
                 workspaceId={active.workspace.workspaceId}
                 fs={api.fs}
                 connected={!!connected}
+                onEdit={openInEditor}
               />
             </div>
           ) : tab === "preview" ? (
@@ -528,6 +583,7 @@ function MachinePanel({
           <Button
             size="sm"
             className="h-7"
+            aria-label="Open workspace at path"
             onClick={() => void submit()}
             disabled={connection !== "connected" || busy || !path.trim()}
           >

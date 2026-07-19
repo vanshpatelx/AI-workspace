@@ -10,6 +10,8 @@ interface Props {
   workspaceId: string;
   fs: WorkersApi["fs"];
   connected: boolean;
+  /** Open a text file in the editor instead of previewing it here. */
+  onEdit?: (path: string, content: string) => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface Props {
  * Directories navigate; files are fetched and rendered inline — text as code,
  * images/video/audio/PDF from a data URI — so nothing has to be downloaded.
  */
-export function FilesPanel({ url, workspaceId, fs, connected }: Props) {
+export function FilesPanel({ url, workspaceId, fs, connected, onEdit }: Props) {
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [preview, setPreview] = useState<FilePreview | null>(null);
@@ -52,7 +54,14 @@ export function FilesPanel({ url, workspaceId, fs, connected }: Props) {
     setLoading(true);
     setError(null);
     try {
-      setPreview(await fs.read(url, workspaceId, join(path, name)));
+      const file = await fs.read(url, workspaceId, join(path, name));
+      // Text goes to the editor; images and PDFs stay here as a preview.
+      if (onEdit && !file.base64) {
+        onEdit(file.path, file.content);
+        setPreview(null);
+      } else {
+        setPreview(file);
+      }
     } catch (err) {
       setError((err as Error).message);
       setPreview(null);

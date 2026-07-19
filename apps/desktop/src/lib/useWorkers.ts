@@ -98,6 +98,12 @@ export interface WorkersApi {
   fs: {
     list: (url: string, workspaceId: string, path: string) => Promise<FileListing>;
     read: (url: string, workspaceId: string, path: string) => Promise<FilePreview>;
+    write: (
+      url: string,
+      workspaceId: string,
+      path: string,
+      content: string,
+    ) => Promise<{ path: string; bytes: number }>;
   };
   preview: {
     scan: (url: string) => Promise<PreviewListing>;
@@ -335,6 +341,12 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
               });
               break;
             }
+            case "fs.written": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              pending?.resolve({ path: msg.path, bytes: msg.bytes });
+              break;
+            }
             case "discover.result": {
               const pending = fsPending.current.get(msg.requestId);
               fsPending.current.delete(msg.requestId);
@@ -534,6 +546,14 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
           requestId,
           workspaceId,
           path,
+        })),
+      write: (url: string, workspaceId: string, path: string, content: string) =>
+        request<{ path: string; bytes: number }>(url, (requestId) => ({
+          type: "fs.write",
+          requestId,
+          workspaceId,
+          path,
+          content,
         })),
     }),
     [request],

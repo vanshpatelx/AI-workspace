@@ -111,6 +111,7 @@ export function RecentProjects({
                   size="sm"
                   variant="ghost"
                   className="h-6 shrink-0 px-1.5 text-[10px]"
+                  aria-label={`Open ${project.name}`}
                   onClick={() => void onOpenProject(project.path)}
                 >
                   <FolderOpen className="h-3 w-3" /> Open

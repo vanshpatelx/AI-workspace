@@ -1,5 +1,6 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, resolve, relative, extname, sep } from "node:path";
+import { readdir, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { join, resolve, relative, extname, sep, dirname } from "node:path";
+import { existsSync } from "node:fs";
 import type { FileEntry } from "@ai-workspace/protocol";
 
 /** Preview cap — large files are refused rather than streamed to the UI. */
@@ -45,8 +46,17 @@ export class FileService {
    * escapes the root (via `..`, an absolute path, or a symlink) is rejected.
    */
   private safeResolve(input: string): string {
-    const cleaned = (input ?? "").replace(/^[/\\]+/, "");
-    const target = resolve(this.root, cleaned);
+    const raw = input ?? "";
+
+    // An absolute path is rejected rather than reinterpreted. Stripping the
+    // leading slash kept it contained, but turned `/tmp/x` into `<root>/tmp/x`
+    // — harmless for a read that then fails, actively wrong for a write, which
+    // would create a file somewhere the caller never asked for.
+    if (raw.startsWith("/") || raw.startsWith("\\") || /^[a-zA-Z]:[/\\]/.test(raw)) {
+      throw new Error("path must be relative to the workspace");
+    }
+
+    const target = resolve(this.root, raw);
     const rel = relative(this.root, target);
     if (rel.startsWith("..") || (rel !== "" && rel.split(sep)[0] === "..")) {
       throw new Error("path is outside the workspace");
@@ -77,6 +87,29 @@ export class FileService {
       a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
     );
     return { path: relative(this.root, dir), entries };
+  }
+
+  /**
+   * Write a text file inside the workspace.
+   *
+   * Not gated by the Approval Center, deliberately. That gate exists for
+   * actions the *agent* wants to take; this is the user saving a file they
+   * opened and edited themselves, the same as typing in the terminal. Asking
+   * them to approve their own keystroke would be noise, and the terminal
+   * already grants strictly more power without asking.
+   *
+   * Containment still applies: the path is resolved against the workspace
+   * root and anything escaping it is refused.
+   */
+  async write(path: string, content: string): Promise<{ path: string; bytes: number }> {
+    const file = this.safeResolve(path);
+    if (existsSync(file) && (await stat(file)).isDirectory()) {
+      throw new Error("cannot write over a directory");
+    }
+    // Create intermediate directories so saving a new nested file works.
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, content, "utf8");
+    return { path: relative(this.root, file), bytes: Buffer.byteLength(content, "utf8") };
   }
 
   async read(

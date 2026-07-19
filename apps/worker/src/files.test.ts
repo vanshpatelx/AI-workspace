@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileService } from "./files.js";
@@ -64,6 +64,14 @@ describe("FileService path containment", () => {
     }
   });
 
+  // Absolute paths must be refused outright. Previously they were silently
+  // rewritten as relative, so this passed only because <root>/etc/passwd did
+  // not happen to exist.
+  it("rejects an absolute path for the stated reason", async () => {
+    await expect(files.read("/etc/passwd")).rejects.toThrow(/must be relative/i);
+    await expect(files.list("/etc")).rejects.toThrow(/must be relative/i);
+  });
+
   it("hides noise directories from listings", async () => {
     mkdirSync(join(root, "node_modules"), { recursive: true });
     mkdirSync(join(root, ".git"), { recursive: true });
@@ -82,5 +90,49 @@ describe("FileService path containment", () => {
 
   it("refuses a directory as a file read", async () => {
     await expect(files.read("src")).rejects.toThrow(/not a file/i);
+  });
+});
+
+describe("FileService writes", () => {
+  it("saves a file inside the workspace", async () => {
+    await files.write("notes.txt", "hello from the editor");
+    const back = await files.read("notes.txt");
+    expect(back.content).toBe("hello from the editor");
+  });
+
+  it("overwrites an existing file", async () => {
+    await files.write("over.txt", "first");
+    await files.write("over.txt", "second");
+    expect((await files.read("over.txt")).content).toBe("second");
+  });
+
+  it("creates intermediate directories", async () => {
+    await files.write("deep/nested/new.ts", "export const x = 1;");
+    expect((await files.read("deep/nested/new.ts")).content).toContain("export const x");
+  });
+
+  it("reports how many bytes were written", async () => {
+    const result = await files.write("bytes.txt", "abcde");
+    expect(result.bytes).toBe(5);
+  });
+
+  // Containment matters more for writes than reads: escaping the root here
+  // means corrupting files outside the project.
+  it.each([
+    ["relative traversal", "../escaped.txt"],
+    ["nested traversal", "src/../../escaped.txt"],
+    ["absolute path", "/tmp/aiw-should-not-exist.txt"],
+    ["deep traversal", "../../../../../../tmp/escaped.txt"],
+  ])("refuses to write via %s", async (_label, path) => {
+    await expect(files.write(path, "should not land")).rejects.toThrow();
+  });
+
+  it("refuses to write over a directory", async () => {
+    await expect(files.write("src", "nope")).rejects.toThrow(/directory/i);
+  });
+
+  it("never creates anything outside the root", async () => {
+    await expect(files.write("../outside.txt", "x")).rejects.toThrow();
+    expect(existsSync(join(outside, "..", "outside.txt"))).toBe(false);
   });
 });

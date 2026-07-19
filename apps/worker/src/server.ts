@@ -607,6 +607,26 @@ export function startWorker(config: WorkerConfig): RunningWorker {
               });
             }
             break;
+          case "fs.write":
+            try {
+              workspaces
+                .filesFor(msg.workspaceId)
+                .write(msg.path, msg.content)
+                .then(({ path, bytes }) => {
+                  log.info(`saved ${path} (${bytes} bytes)`);
+                  conn.send({ type: "fs.written", requestId: msg.requestId, path, bytes });
+                })
+                .catch((err: Error) =>
+                  conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
+                );
+            } catch (err) {
+              conn.send({
+                type: "fs.error",
+                requestId: msg.requestId,
+                message: (err as Error).message,
+              });
+            }
+            break;
           case "discover.projects":
             discoverProjects()
               .then((projects) => {
