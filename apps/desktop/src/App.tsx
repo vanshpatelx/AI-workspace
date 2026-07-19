@@ -31,7 +31,6 @@ import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
-import { FilesPanel } from "./components/FilesPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 import { Markdown } from "./components/Markdown.js";
@@ -52,8 +51,8 @@ import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-e
  * so it is split out of the initial bundle. Loading it eagerly also pushed the
  * production build past the memory available on a CI runner.
  */
-const EditorPanel = lazy(() =>
-  import("./components/EditorPanel.js").then((m) => ({ default: m.EditorPanel })),
+const CodePanel = lazy(() =>
+  import("./components/CodePanel.js").then((m) => ({ default: m.CodePanel })),
 );
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
@@ -62,8 +61,7 @@ const STORE_KEY = "aiw.workers";
 const TABS = [
   { id: "chat", label: "Chat", Icon: Bot },
   { id: "terminal", label: "Terminal", Icon: Terminal },
-  { id: "files", label: "Files", Icon: FolderTree },
-  { id: "editor", label: "Editor", Icon: FileCode },
+  { id: "code", label: "Code", Icon: FileCode },
   { id: "preview", label: "Preview", Icon: Globe },
 ] as const;
 
@@ -88,7 +86,7 @@ export function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<"chat" | "terminal" | "files" | "editor" | "preview">("chat");
+  const [tab, setTab] = useState<"chat" | "terminal" | "code" | "preview">("chat");
   /** Files open in the editor, keyed by workspace so tabs follow the project. */
   const [openFiles, setOpenFiles] = useState<Record<string, OpenFile[]>>({});
   const [activeFile, setActiveFile] = useState<Record<string, string | null>>({});
@@ -194,16 +192,25 @@ export function App() {
   const wsKey = active ? `${active.worker.url}:${active.workspace.workspaceId}` : "";
   const filesOpen = openFiles[wsKey] ?? [];
 
-  /** Open a file in the editor, or focus it if already open. */
-  const openInEditor = (path: string, content: string) => {
-    setOpenFiles((prev) => {
-      const list = prev[wsKey] ?? [];
-      // Reopening keeps any unsaved draft rather than discarding it.
-      if (list.some((f) => f.path === path)) return prev;
-      return { ...prev, [wsKey]: [...list, { path, saved: content, draft: content }] };
-    });
+  /**
+   * Open a path from the tree, or focus it if it is already open.
+   *
+   * The tree only knows names, so the contents are fetched here. Binary files
+   * open as a preview rather than as text, which would render as mojibake and
+   * be written back corrupted on save.
+   */
+  const openPath = async (path: string) => {
+    if (!active) return;
+    if (filesOpen.some((f) => f.path === path)) {
+      setActiveFile((prev) => ({ ...prev, [wsKey]: path }));
+      return;
+    }
+    const file = await api.fs.read(active.worker.url, active.workspace.workspaceId, path);
+    const opened = file.base64
+      ? { path, saved: "", draft: "", media: { mime: file.mime, base64: file.content } }
+      : { path, saved: file.content, draft: file.content };
+    setOpenFiles((prev) => ({ ...prev, [wsKey]: [...(prev[wsKey] ?? []), opened] }));
     setActiveFile((prev) => ({ ...prev, [wsKey]: path }));
-    setTab("editor");
   };
 
   const connected = active?.worker.connection === "connected";
@@ -374,7 +381,7 @@ export function App() {
                 connected={!!connected}
               />
             </div>
-          ) : tab === "editor" ? (
+          ) : tab === "code" ? (
             <div className="min-h-0 flex-1">
               <Suspense
                 fallback={
@@ -383,47 +390,38 @@ export function App() {
                   </div>
                 }
               >
-              <EditorPanel
-                url={active.worker.url}
-                workspaceId={active.workspace.workspaceId}
-                fs={api.fs}
-                connected={!!connected}
-                files={filesOpen}
-                activePath={activeFile[wsKey] ?? filesOpen[0]?.path ?? null}
-                onSelect={(path) => setActiveFile((p) => ({ ...p, [wsKey]: path }))}
-                onClose={(path) =>
-                  setOpenFiles((p) => ({
-                    ...p,
-                    [wsKey]: (p[wsKey] ?? []).filter((f) => f.path !== path),
-                  }))
-                }
-                onChange={(path, draft) =>
-                  setOpenFiles((p) => ({
-                    ...p,
-                    [wsKey]: (p[wsKey] ?? []).map((f) => (f.path === path ? { ...f, draft } : f)),
-                  }))
-                }
-                onSaved={(path, content) =>
-                  setOpenFiles((p) => ({
-                    ...p,
-                    [wsKey]: (p[wsKey] ?? []).map((f) =>
-                      f.path === path ? { ...f, saved: content, draft: content } : f,
-                    ),
-                  }))
-                }
-              />
+                <CodePanel
+                  key={`${active.worker.url}:${active.workspace.workspaceId}`}
+                  url={active.worker.url}
+                  workspaceId={active.workspace.workspaceId}
+                  fs={api.fs}
+                  connected={!!connected}
+                  files={filesOpen}
+                  activePath={activeFile[wsKey] ?? filesOpen[0]?.path ?? null}
+                  onOpenPath={openPath}
+                  onSelect={(path) => setActiveFile((p) => ({ ...p, [wsKey]: path }))}
+                  onClose={(path) =>
+                    setOpenFiles((p) => ({
+                      ...p,
+                      [wsKey]: (p[wsKey] ?? []).filter((f) => f.path !== path),
+                    }))
+                  }
+                  onChange={(path, draft) =>
+                    setOpenFiles((p) => ({
+                      ...p,
+                      [wsKey]: (p[wsKey] ?? []).map((f) => (f.path === path ? { ...f, draft } : f)),
+                    }))
+                  }
+                  onSaved={(path, content) =>
+                    setOpenFiles((p) => ({
+                      ...p,
+                      [wsKey]: (p[wsKey] ?? []).map((f) =>
+                        f.path === path ? { ...f, saved: content, draft: content } : f,
+                      ),
+                    }))
+                  }
+                />
               </Suspense>
-            </div>
-          ) : tab === "files" ? (
-            <div className="min-h-0 flex-1">
-              <FilesPanel
-                key={`${active.worker.url}:${active.workspace.workspaceId}`}
-                url={active.worker.url}
-                workspaceId={active.workspace.workspaceId}
-                fs={api.fs}
-                connected={!!connected}
-                onEdit={openInEditor}
-              />
             </div>
           ) : tab === "preview" ? (
             <div className="min-h-0 flex-1">
