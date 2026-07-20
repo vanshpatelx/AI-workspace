@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 
 /** Icon and accent per tool, so actions are scannable at a glance. */
-const TOOL_STYLES: Record<string, { Icon: LucideIcon; accent: string }> = {
+export const TOOL_STYLES: Record<string, { Icon: LucideIcon; accent: string }> = {
   Read: { Icon: FileText, accent: "text-sky-400" },
   Edit: { Icon: FilePen, accent: "text-amber-400" },
   Write: { Icon: FilePlus, accent: "text-emerald-400" },
