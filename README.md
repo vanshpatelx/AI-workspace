@@ -93,6 +93,20 @@ Worker address for the UI.
 > Workspace packages resolve from `dist/`, so run `pnpm build:packages`
 > after changing `packages/*`.
 
+## Editing: full VS Code
+
+The **Code** tab is a complete VS Code, not a cut-down editor — real extensions,
+IntelliSense, an integrated terminal, and debugging. It runs on the Worker (as
+[code-server](https://github.com/coder/code-server), a build of Code-OSS) and is
+framed in the app through the same pairing-gated proxy the previews use, so it
+works over Tailscale or a relay and never exposes an open IDE on the network.
+
+The server binary (~180MB) downloads to the Worker on first use and is cached
+under `~/.ai-workspace/vscode`; the Code tab shows the download progress, then
+starts in seconds thereafter. Because the workbench runs remotely, it needs the
+Worker reachable and does not work offline — that is the deliberate trade for
+having the whole editor rather than a text box.
+
 ## Remote access
 
 Direct transports (Tailscale, WireGuard, LAN, SSH tunnel) need no extra

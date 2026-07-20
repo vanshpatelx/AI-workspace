@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MonitorSmartphone,
   Send,
@@ -10,7 +10,6 @@ import {
   KeyRound,
   Plus,
   Trash2,
-  FolderTree,
   Globe,
   FolderOpen,
   GitBranch,
@@ -39,21 +38,13 @@ import { UsageBar } from "./components/UsageBar.js";
 import { ApprovalCard, ApprovalCenter } from "./components/ApprovalCard.js";
 import { LiveActivity } from "./components/LiveActivity.js";
 import { RecentProjects } from "./components/RecentProjects.js";
-import type { OpenFile } from "./components/EditorPanel.js";
 import { TodoQueue } from "./components/TodoQueue.js";
 import { StepTimeline } from "./components/StepTimeline.js";
 import { ParkedBanner } from "./components/ParkedBanner.js";
 import { SchedulePicker, ScheduledList } from "./components/SchedulePicker.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
 
-/**
- * Monaco is several megabytes and only needed once the Editor tab is opened,
- * so it is split out of the initial bundle. Loading it eagerly also pushed the
- * production build past the memory available on a CI runner.
- */
-const CodePanel = lazy(() =>
-  import("./components/CodePanel.js").then((m) => ({ default: m.CodePanel })),
-);
+import { VSCodePanel } from "./components/VSCodePanel.js";
 
 const DEFAULT_URL = import.meta.env.VITE_WORKER_URL ?? "ws://127.0.0.1:4501";
 const STORE_KEY = "aiw.workers";
@@ -87,9 +78,6 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [tab, setTab] = useState<"chat" | "terminal" | "code" | "preview">("chat");
-  /** Files open in the editor, keyed by workspace so tabs follow the project. */
-  const [openFiles, setOpenFiles] = useState<Record<string, OpenFile[]>>({});
-  const [activeFile, setActiveFile] = useState<Record<string, string | null>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const api = useWorkers(targets);
@@ -188,30 +176,6 @@ export function App() {
       />
     );
   }
-
-  const wsKey = active ? `${active.worker.url}:${active.workspace.workspaceId}` : "";
-  const filesOpen = openFiles[wsKey] ?? [];
-
-  /**
-   * Open a path from the tree, or focus it if it is already open.
-   *
-   * The tree only knows names, so the contents are fetched here. Binary files
-   * open as a preview rather than as text, which would render as mojibake and
-   * be written back corrupted on save.
-   */
-  const openPath = async (path: string) => {
-    if (!active) return;
-    if (filesOpen.some((f) => f.path === path)) {
-      setActiveFile((prev) => ({ ...prev, [wsKey]: path }));
-      return;
-    }
-    const file = await api.fs.read(active.worker.url, active.workspace.workspaceId, path);
-    const opened = file.base64
-      ? { path, saved: "", draft: "", media: { mime: file.mime, base64: file.content } }
-      : { path, saved: file.content, draft: file.content };
-    setOpenFiles((prev) => ({ ...prev, [wsKey]: [...(prev[wsKey] ?? []), opened] }));
-    setActiveFile((prev) => ({ ...prev, [wsKey]: path }));
-  };
 
   const connected = active?.worker.connection === "connected";
   // The Worker reports per-workspace activity; pair it with the last tool the
@@ -383,45 +347,13 @@ export function App() {
             </div>
           ) : tab === "code" ? (
             <div className="min-h-0 flex-1">
-              <Suspense
-                fallback={
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Loading editor…
-                  </div>
-                }
-              >
-                <CodePanel
-                  key={`${active.worker.url}:${active.workspace.workspaceId}`}
-                  url={active.worker.url}
-                  workspaceId={active.workspace.workspaceId}
-                  fs={api.fs}
-                  connected={!!connected}
-                  files={filesOpen}
-                  activePath={activeFile[wsKey] ?? filesOpen[0]?.path ?? null}
-                  onOpenPath={openPath}
-                  onSelect={(path) => setActiveFile((p) => ({ ...p, [wsKey]: path }))}
-                  onClose={(path) =>
-                    setOpenFiles((p) => ({
-                      ...p,
-                      [wsKey]: (p[wsKey] ?? []).filter((f) => f.path !== path),
-                    }))
-                  }
-                  onChange={(path, draft) =>
-                    setOpenFiles((p) => ({
-                      ...p,
-                      [wsKey]: (p[wsKey] ?? []).map((f) => (f.path === path ? { ...f, draft } : f)),
-                    }))
-                  }
-                  onSaved={(path, content) =>
-                    setOpenFiles((p) => ({
-                      ...p,
-                      [wsKey]: (p[wsKey] ?? []).map((f) =>
-                        f.path === path ? { ...f, saved: content, draft: content } : f,
-                      ),
-                    }))
-                  }
-                />
-              </Suspense>
+              <VSCodePanel
+                key={`${active.worker.url}:${active.workspace.workspaceId}`}
+                url={active.worker.url}
+                workspacePath={active.workspace.path}
+                vscode={api.vscode}
+                connected={!!connected}
+              />
             </div>
           ) : tab === "preview" ? (
             <div className="min-h-0 flex-1">

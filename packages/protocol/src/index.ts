@@ -238,6 +238,8 @@ export type ClientMessage =
       content: string;
     }
   | { type: "preview.scan"; requestId: string }
+  /** Ensure the VS Code server is up (downloads it on first use). */
+  | { type: "vscode.start"; requestId: string }
   /** Tell Metro to reload the app connected to it. */
   | { type: "preview.reload"; requestId: string; port: number }
   | { type: "discover.projects"; requestId: string }
@@ -313,6 +315,19 @@ export type ServerMessage =
     }
   /** Result of a Metro reload; `error` is null when the app was told to reload. */
   | { type: "preview.reloaded"; requestId: string; error: string | null }
+  /** Progress while the VS Code server downloads/starts on first use. */
+  | {
+      type: "vscode.progress";
+      requestId: string;
+      phase: "downloading" | "extracting" | "starting";
+      percent?: number;
+    }
+  /**
+   * VS Code is ready to frame. `base` is host-relative (":4502/vscode"), the
+   * same shape as the preview proxy; the Desktop prepends the Worker host and
+   * appends the workspace folder as a query.
+   */
+  | { type: "vscode.ready"; requestId: string; base: string; error: string | null }
   | { type: "discover.result"; requestId: string; projects: DiscoveredProject[] }
   | { type: "tasks.parked"; tasks: ParkedTask[] }
   | { type: "schedule.list"; prompts: ScheduledPrompt[] }
