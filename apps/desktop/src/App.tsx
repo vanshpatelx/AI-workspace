@@ -41,7 +41,7 @@ import { LiveActivity } from "./components/LiveActivity.js";
 import { RecentProjects } from "./components/RecentProjects.js";
 import type { OpenFile } from "./components/EditorPanel.js";
 import { TodoQueue } from "./components/TodoQueue.js";
-import { StepGroup } from "./components/StepGroup.js";
+import { StepTimeline } from "./components/StepTimeline.js";
 import { ParkedBanner } from "./components/ParkedBanner.js";
 import { SchedulePicker, ScheduledList } from "./components/SchedulePicker.js";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./components/ai-elements/reasoning.js";
@@ -481,18 +481,27 @@ export function App() {
                     agent runs in that directory.
                   </p>
                 ) : (
-                  groupIntoSteps(messages).map((entry, i) =>
-                    entry.kind === "step" ? (
-                      <StepGroup key={i} index={entry.index} tools={entry.tools} />
-                    ) : (
-                      <Turn
-                        key={i}
-                        message={entry.message}
-                        streaming={entry.isLast && isWorking}
-                        activity={activityLabel}
-                      />
-                    ),
-                  )
+                  (() => {
+                    const rendered = groupIntoSteps(messages);
+                    return rendered.map((entry, i) =>
+                      entry.kind === "step" ? (
+                        <StepTimeline
+                          key={i}
+                          tools={entry.tools}
+                          // Live only when this run is the last thing on screen and
+                          // the turn is still going — that is the run in flight.
+                          live={i === rendered.length - 1 && isWorking}
+                        />
+                      ) : (
+                        <Turn
+                          key={i}
+                          message={entry.message}
+                          streaming={entry.isLast && isWorking}
+                          activity={activityLabel}
+                        />
+                      ),
+                    );
+                  })()
                 )}
               </div>
 
