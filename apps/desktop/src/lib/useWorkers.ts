@@ -35,6 +35,20 @@ export interface PreviewListing {
   token: string;
 }
 
+export interface VSCodeProgress {
+  phase: "downloading" | "extracting" | "starting";
+  percent?: number;
+}
+
+export interface VSCodeReady {
+  /** Absolute base to frame, e.g. "http://host:4600/vscode". */
+  base: string;
+  /** Pairing code, appended as ?__aiw= on the iframe src. */
+  token: string;
+  /** Error from the Worker, or null when VS Code is ready. */
+  error: string | null;
+}
+
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "unauthorized";
 
 export interface ChatMessage {
@@ -132,6 +146,9 @@ export interface WorkersApi {
     /** Ask Metro to reload the app; resolves to an error message, or null. */
     reload: (url: string, port: number) => Promise<string | null>;
   };
+  vscode: {
+    start: (url: string, onProgress: (p: VSCodeProgress) => void) => Promise<VSCodeReady>;
+  };
   discover: {
     /** Past agent conversations found on that machine. */
     projects: (url: string) => Promise<DiscoveredProject[]>;
@@ -180,6 +197,8 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
   const fsPending = useRef<Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>>(
     new Map(),
   );
+  /** Progress callbacks for VS Code startup, which streams before it resolves. */
+  const vscodeProgress = useRef<Map<string, (p: VSCodeProgress) => void>>(new Map());
   const key = targets.map((t) => `${t.url}|${t.token}`).join(",");
 
   const patch = useCallback((url: string, fn: (prev: WorkerState) => WorkerState) => {
@@ -390,6 +409,25 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
                 servers: msg.servers,
                 proxyBase: `http://${host}${msg.proxyBase}`,
                 token: target.token,
+              });
+              break;
+            }
+            case "vscode.progress": {
+              vscodeProgress.current.get(msg.requestId)?.({
+                phase: msg.phase,
+                percent: msg.percent,
+              });
+              break;
+            }
+            case "vscode.ready": {
+              const pending = fsPending.current.get(msg.requestId);
+              fsPending.current.delete(msg.requestId);
+              vscodeProgress.current.delete(msg.requestId);
+              const host = new URL(target.url).hostname;
+              pending?.resolve({
+                base: `http://${host}${msg.base}`,
+                token: target.token,
+                error: msg.error,
               });
               break;
             }
@@ -648,6 +686,30 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     [request],
   );
 
+  const vscode = useMemo(
+    () => ({
+      /**
+       * Bring up the workspace's VS Code server and return where to frame it.
+       * First run downloads ~180MB, so there is no short timeout and progress
+       * streams through `onProgress`; five minutes is a generous ceiling.
+       */
+      start: (url: string, onProgress: (p: VSCodeProgress) => void) =>
+        new Promise<VSCodeReady>((resolve, reject) => {
+          const requestId = `vs-${++commandCounter}`;
+          fsPending.current.set(requestId, { resolve, reject });
+          vscodeProgress.current.set(requestId, onProgress);
+          emit(url, { type: "vscode.start", requestId });
+          setTimeout(() => {
+            if (fsPending.current.delete(requestId)) {
+              vscodeProgress.current.delete(requestId);
+              reject(new Error("VS Code took too long to start"));
+            }
+          }, 300000);
+        }),
+    }),
+    [emit],
+  );
+
   const discover = useMemo(
     () => ({
       projects: (url: string) =>
@@ -683,6 +745,7 @@ export function useWorkers(targets: WorkerTarget[]): WorkersApi {
     terminal,
     fs,
     preview,
+    vscode,
     discover,
   };
 }

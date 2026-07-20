@@ -6,7 +6,9 @@ const run = promisify(execFile);
 
 /** Ports the Worker itself owns — never advertise these as previews. */
 function ownPorts(workerPort: number): Set<number> {
-  return new Set([workerPort, workerPort + 1, 5180]);
+  // +1 is the proxy/approval endpoint, +2 is the VS Code server — neither is a
+  // user dev server, so they must never be advertised as previews.
+  return new Set([workerPort, workerPort + 1, workerPort + 2, 5180]);
 }
 
 /** Recognise the usual dev servers from their default ports / process names. */

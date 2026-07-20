@@ -6,6 +6,7 @@ import {
   type OutgoingHttpHeaders,
   type Server as HttpServer,
 } from "node:http";
+import { connect as netConnect } from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROTOCOL_VERSION,
@@ -24,6 +25,7 @@ import { ApprovalManager, classifyCommand } from "./approvals.js";
 import { TerminalManager } from "./terminals.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { detectPreviewServers, reloadMetro } from "./preview.js";
+import { VSCodeServer } from "./vscode.js";
 import { discoverProjects } from "./discovery.js";
 import { ParkedTasks } from "./parked.js";
 import { ScheduledPrompts } from "./schedule.js";
@@ -379,6 +381,12 @@ export function startWorker(config: WorkerConfig): RunningWorker {
   }
 
   const PREVIEW_COOKIE = "aiw_preview";
+  const VSCODE_COOKIE = "aiw_vscode";
+
+  // One VS Code server for the whole Worker, on its own loopback port. It is
+  // brought up lazily the first time a Code tab opens (the binary is ~180MB), and
+  // the proxy below is the only thing that can reach it.
+  const vscode = new VSCodeServer(config.port + 2, (m) => log.info(m));
 
   function cookieValue(header: string | undefined, name: string): string | undefined {
     return header
@@ -435,6 +443,47 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         return;
       }
 
+      // /vscode/... -> the full VS Code workbench. The prefix is stripped so
+      // code-server sees ordinary root paths; its assets and websocket then live
+      // under /vscode, which the cookie's Path scopes the pairing code to.
+      if (/^\/vscode(\/|\?|$)/.test(rawUrl.split("?")[0]!)) {
+        const query = rawUrl.includes("?") ? new URLSearchParams(rawUrl.split("?")[1]) : null;
+        const supplied = query?.get("__aiw") ?? cookieValue(req.headers.cookie, VSCODE_COOKIE);
+        if (!tokenMatches(supplied, config.pairingCode)) {
+          res.writeHead(401, { "content-type": "text/plain" });
+          res.end("unauthorized: VS Code requires the Worker pairing code");
+          return;
+        }
+        const setCookie: Record<string, string> =
+          query?.get("__aiw") != null
+            ? { "set-cookie": `${VSCODE_COOKIE}=${config.pairingCode}; Path=/vscode; HttpOnly; SameSite=Lax` }
+            : {};
+        let path = rawUrl.slice("/vscode".length);
+        if (!path.startsWith("/")) path = `/${path}`;
+        const upstream = httpRequest(
+          {
+            host: "127.0.0.1",
+            port: vscode.targetPort,
+            path,
+            method: req.method,
+            headers: { ...req.headers, host: `127.0.0.1:${vscode.targetPort}` },
+          },
+          (up) => {
+            const headers: OutgoingHttpHeaders = { ...up.headers, ...setCookie };
+            delete headers["x-frame-options"];
+            delete headers["content-security-policy"];
+            res.writeHead(up.statusCode ?? 502, headers);
+            up.pipe(res);
+          },
+        );
+        upstream.on("error", (err) => {
+          res.writeHead(502, { "content-type": "text/plain" });
+          res.end(`VS Code upstream error: ${err.message}`);
+        });
+        req.pipe(upstream);
+        return;
+      }
+
       if (req.method !== "POST" || req.url !== "/approval") {
         res.writeHead(404).end();
         return;
@@ -481,6 +530,38 @@ export function startWorker(config: WorkerConfig): RunningWorker {
         }
       });
     });
+
+    // The workbench runs almost entirely over a websocket, so the proxy has to
+    // carry the upgrade too — a plain HTTP proxy would leave VS Code as a static
+    // shell that never connects. Raw socket piping, gated by the same cookie.
+    http.on("upgrade", (req, socket, head) => {
+      const rawUrl = req.url ?? "";
+      if (!/^\/vscode(\/|\?|$)/.test(rawUrl.split("?")[0]!)) {
+        socket.destroy();
+        return;
+      }
+      const query = rawUrl.includes("?") ? new URLSearchParams(rawUrl.split("?")[1]) : null;
+      const supplied = query?.get("__aiw") ?? cookieValue(req.headers.cookie, VSCODE_COOKIE);
+      if (!tokenMatches(supplied, config.pairingCode)) {
+        socket.destroy();
+        return;
+      }
+      let path = rawUrl.slice("/vscode".length);
+      if (!path.startsWith("/")) path = `/${path}`;
+      const upstream = netConnect(vscode.targetPort, "127.0.0.1", () => {
+        const lines = [`${req.method} ${path} HTTP/1.1`];
+        for (const [k, v] of Object.entries(req.headers)) {
+          lines.push(`${k}: ${Array.isArray(v) ? v.join(", ") : v}`);
+        }
+        upstream.write(lines.join("\r\n") + "\r\n\r\n");
+        if (head.length) upstream.write(head);
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+      upstream.on("error", () => socket.destroy());
+      socket.on("error", () => upstream.destroy());
+    });
+
     http.listen(config.port + 1, "127.0.0.1");
     return http;
   }
@@ -774,6 +855,23 @@ export function startWorker(config: WorkerConfig): RunningWorker {
                 conn.send({ type: "fs.error", requestId: msg.requestId, message: err.message }),
               );
             break;
+          case "vscode.start": {
+            const base = `:${config.port + 1}/vscode`;
+            vscode
+              .ensure((p) =>
+                conn.send({
+                  type: "vscode.progress",
+                  requestId: msg.requestId,
+                  phase: p.phase,
+                  percent: p.percent,
+                }),
+              )
+              .then(() => conn.send({ type: "vscode.ready", requestId: msg.requestId, base, error: null }))
+              .catch((err: Error) =>
+                conn.send({ type: "vscode.ready", requestId: msg.requestId, base, error: err.message }),
+              );
+            break;
+          }
           default:
             break;
         }
@@ -826,6 +924,7 @@ export function startWorker(config: WorkerConfig): RunningWorker {
       parked.stopAll();
       schedule.stopAll();
       terminals.closeAll();
+      vscode.stop();
       keepAwake.stop();
       relay?.stop();
       approvalHttp.close();
