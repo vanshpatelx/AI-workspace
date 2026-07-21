@@ -16,8 +16,8 @@
     "clean": "rm -rf dist release *.tsbuildinfo"
   },
   "build": {
-    "appId": "dev.aiworkspace.desktop",
-    "productName": "AI Workspace",
+    "appId": "dev.otter.desktop",
+    "productName": "Otter",
     "directories": {
       "output": "release"
     },
@@ -41,7 +41,7 @@
       ]
     },
     "dmg": {
-      "title": "AI Workspace"
+      "title": "Otter"
     }
   },
   "devDependencies": {

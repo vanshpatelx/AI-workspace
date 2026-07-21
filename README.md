@@ -1,4 +1,4 @@
-# AI-workspace
+# Otter
 
 A local-first desktop application for managing AI-powered development environments running across one or more machines.
 
@@ -60,8 +60,8 @@ Gatekeeper's message for a quarantined app it will not verify — the download
 is fine. Clear the quarantine flag and open it:
 
 ```bash
-xattr -cr "/Applications/AI Workspace.app"
-open "/Applications/AI Workspace.app"
+xattr -cr "/Applications/Otter.app"
+open "/Applications/Otter.app"
 ```
 
 > Releases before `v0.1.2` shipped an invalid signature and always showed the

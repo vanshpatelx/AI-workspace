@@ -304,7 +304,7 @@ export function App() {
             <Logo className="h-4 w-5" />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight">AI Workspace</div>
+            <div className="text-sm font-semibold leading-tight">Otter</div>
             <div className="text-xs text-muted-foreground">
               {Object.values(workers).filter((w) => w.connection === "connected").length} of{" "}
               {targets.length} machines ·{" "}
