@@ -15,6 +15,10 @@ import {
   GitBranch,
   Sparkles,
   FileCode,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Server,
+  History,
 } from "lucide-react";
 import type { ApprovalRequest, Workspace } from "@ai-workspace/protocol";
 import {
@@ -72,13 +76,103 @@ function loadTargets(): WorkerTarget[] {
   }
 }
 
+/**
+ * The always-visible activity rail, as VS Code has one.
+ *
+ * The project panel beside it can be collapsed to reclaim width for the chat or
+ * the editor; this rail stays, so the app is still navigable when the panel is
+ * hidden. Each icon opens the panel to its section, and a couple carry live
+ * signal — a connection dot, a pending-approval count — so the collapsed state
+ * still tells you something rather than being purely decorative.
+ */
+function SideRail({
+  open,
+  onToggle,
+  connected,
+  approvals,
+  onReveal,
+  onAdd,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  connected: boolean;
+  approvals: number;
+  onReveal: (section: string) => void;
+  onAdd: () => void;
+}) {
+  const Item = ({
+    icon: Icon,
+    label,
+    onClick,
+    dot,
+    badge,
+  }: {
+    icon: typeof Server;
+    label: string;
+    onClick: () => void;
+    dot?: boolean;
+    badge?: number;
+  }) => (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="relative flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <Icon className="h-5 w-5" />
+      {dot && (
+        <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-background" />
+      )}
+      {badge ? (
+        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-semibold text-white">
+          {badge > 9 ? "9+" : badge}
+        </span>
+      ) : null}
+    </button>
+  );
+
+  return (
+    <nav className="flex w-[52px] shrink-0 flex-col items-center gap-1 border-r bg-card/30 py-2">
+      <button
+        onClick={onToggle}
+        title={open ? "Collapse sidebar" : "Expand sidebar"}
+        aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+        className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        {open ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeftOpen className="h-5 w-5" />}
+      </button>
+      <div className="my-1 h-px w-6 bg-border" />
+      <Item icon={Server} label="Machines & workspaces" onClick={() => onReveal("machines")} dot={connected} />
+      <Item icon={History} label="Recent projects" onClick={() => onReveal("recent")} />
+      <Item icon={ShieldAlert} label="Approvals" onClick={() => onReveal("approvals")} badge={approvals} />
+      <Item icon={Terminal} label="Run a command" onClick={() => onReveal("run")} />
+      <div className="mt-auto" />
+      <Item icon={Plus} label="Add machine" onClick={onAdd} />
+    </nav>
+  );
+}
+
 export function App() {
   const [targets, setTargets] = useState<WorkerTarget[]>(loadTargets);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [tab, setTab] = useState<"chat" | "terminal" | "code" | "preview">("chat");
+  // The project sidebar collapses to an icon rail, VS Code style; remembered.
+  const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem("aiw.sidebar") !== "closed");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem("aiw.sidebar", sidebarOpen ? "open" : "closed");
+  }, [sidebarOpen]);
+
+  /** Open the panel and bring a section into view when a rail icon is clicked. */
+  const revealSection = (section: string) => {
+    setSidebarOpen(true);
+    requestAnimationFrame(() =>
+      document.getElementById(`side-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
 
   const api = useWorkers(targets);
   const {
@@ -226,8 +320,18 @@ export function App() {
         </div>
       </header>
 
-      <div className="grid flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
-        <section className="flex flex-col gap-3 overflow-y-auto pr-1">
+      <div className="flex flex-1 overflow-hidden">
+        <SideRail
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen((o) => !o)}
+          connected={Object.values(workers).some((w) => w.connection === "connected")}
+          approvals={allApprovals.length}
+          onReveal={revealSection}
+          onAdd={() => setAdding(true)}
+        />
+        {sidebarOpen && (
+        <section className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto border-r p-3">
+          <div id="side-machines" className="flex flex-col gap-3">
           {targets.map((t) => (
             <MachinePanel
               key={t.url}
@@ -253,6 +357,7 @@ export function App() {
               />
             ) : null,
           )}
+          </div>
 
           {active && (
             <ScheduledList
@@ -264,6 +369,7 @@ export function App() {
             />
           )}
 
+          <div id="side-recent">
           {targets.map((t) => (
             <RecentProjects
               key={`recent-${t.url}`}
@@ -289,25 +395,32 @@ export function App() {
               }}
             />
           ))}
+          </div>
 
+          <div id="side-approvals">
           <ApprovalCenter
             items={allApprovals.filter(
               (i) => !inlineApprovals.some((a) => a.id === i.approval.id),
             )}
             onResolve={resolveApproval}
           />
+          </div>
 
           {active && (
+            <div id="side-run">
             <CommandRunner
               connected={!!connected}
               commands={active.worker.commands[active.workspace.workspaceId] ?? []}
               workspaceName={active.workspace.name}
               onRun={(cmd) => runCommand(active.worker.url, active.workspace.workspaceId, cmd)}
             />
+            </div>
           )}
         </section>
+        )}
 
-        <Card className="flex min-h-0 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col p-4">
+        <Card className="flex min-h-0 flex-1 flex-col">
           <CardHeader className="flex-row items-center gap-1 space-y-0 border-b py-2">
             {TABS.map(({ id, label, Icon }) => (
               <Button
@@ -485,6 +598,7 @@ export function App() {
             </>
           )}
         </Card>
+        </div>
       </div>
     </div>
   );
