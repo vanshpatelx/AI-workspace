@@ -68,7 +68,7 @@ Usage:
 
   aiw help             Show this help
 
-Docs: https://github.com/vanshpatelx/AI-workspace`;
+Docs: https://github.com/vanshpatelx/Otter`;
 
 async function cmdStart(): Promise<void> {
   const config = loadConfig();

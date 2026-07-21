@@ -2,14 +2,14 @@
 #
 # AI Workspace installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/vanshpatelx/AI-workspace/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/vanshpatelx/Otter/main/install.sh | bash
 #
 # Installs the Worker (the `aiw` CLI) into ~/.ai-workspace/app and links it
 # onto your PATH. Everything stays on this machine; nothing is uploaded.
 
 set -euo pipefail
 
-REPO="${AIW_REPO:-https://github.com/vanshpatelx/AI-workspace.git}"
+REPO="${AIW_REPO:-https://github.com/vanshpatelx/Otter.git}"
 BRANCH="${AIW_BRANCH:-main}"
 APP_DIR="${AIW_APP_DIR:-$HOME/.ai-workspace/app}"
 BIN_DIR="${AIW_BIN_DIR:-$HOME/.local/bin}"

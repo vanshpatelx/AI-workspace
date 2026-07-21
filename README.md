@@ -25,7 +25,7 @@ Instead of remotely controlling computers, you reconnect to persistent AI worksp
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vanshpatelx/AI-workspace/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vanshpatelx/Otter/main/install.sh | bash
 ```
 
 Then:
@@ -48,7 +48,7 @@ aiw service uninstall
 
 ### Desktop app
 
-Download the `.dmg` from [Releases](https://github.com/vanshpatelx/AI-workspace/releases)
+Download the `.dmg` from [Releases](https://github.com/vanshpatelx/Otter/releases)
 and drag it to Applications.
 
 The build is ad-hoc signed rather than notarized (that needs a paid Apple
