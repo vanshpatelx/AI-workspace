@@ -1,4 +1,4 @@
-// Electron main process for the AI Workspace desktop app.
+// Electron main process for the Otter desktop app.
 //
 // The window hosts the same renderer served by `aiw ui` — the app is a pure
 // control centre, so it holds no workspace state of its own. Workers are
@@ -19,7 +19,7 @@ function createWindow(url) {
     height: 860,
     minWidth: 900,
     minHeight: 600,
-    title: "AI Workspace",
+    title: "Otter",
     backgroundColor: "#0a0a0b",
     titleBarStyle: "hiddenInset",
     webPreferences: {
