@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  MonitorSmartphone,
   Send,
   Bot,
   ShieldAlert,
@@ -35,6 +34,7 @@ import { Button } from "./components/ui/button.js";
 import { Input } from "./components/ui/input.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
+import { Logo } from "./components/Logo.js";
 import { NotificationCenter, type FeedItem } from "./components/NotificationCenter.js";
 import { Markdown } from "./components/Markdown.js";
 import { ToolCall } from "./components/ToolCall.js";
@@ -300,8 +300,8 @@ export function App() {
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b px-5 py-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <MonitorSmartphone className="h-4 w-4" />
+          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-white text-[#071950]">
+            <Logo className="h-4 w-5" />
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight">AI Workspace</div>
